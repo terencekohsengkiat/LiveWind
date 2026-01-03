@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Singapore Live Wind Tracker</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; }
+        header { text-align: center; margin-bottom: 30px; }
+        .refresh-btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        .refresh-btn:hover { background: #0056b3; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; flex-direction: column; align-items: center; }
+        .station-name { font-weight: bold; font-size: 1.1em; margin-bottom: 10px; color: #2c3e50; text-align: center; }
+        
+        .reading-row { display: flex; width: 100%; justify-content: space-around; align-items: center; }
+        .value-box { text-align: center; }
+        .label { font-size: 0.8em; color: #7f8c8d; text-transform: uppercase; }
+        .value { font-size: 1.2em; font-weight: bold; }
+
+        /* Wind Direction Arrow */
+        .arrow { font-size: 24px; transition: transform 0.5s ease-in-out; display: inline-block; color: #e67e22; }
+        
+        .loading { text-align: center; font-style: italic; color: #666; }
+        .error { color: #d9534f; background: #fdf7f7; padding: 10px; border-radius: 5px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>SG Live Wind Readings</h1>
+        <p id="timestamp">Loading latest data...</p>
+        <button class="refresh-btn" onclick="fetchAllWindData()">Refresh Data</button>
+    </header>
+
+    <div id="error-message" class="error" style="display:none;"></div>
+    <div id="wind-grid" class="grid">
+        <div class="loading">Fetching data from data.gov.sg...</div>
+    </div>
+</div>
+
+<script>
+    // Your API Key for higher rate limits
+    const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
+    
+    const SPEED_URL = "https://api-open.data.gov.sg/v2/real-time/api/wind-speed";
+    const DIRECTION_URL = "https://api-open.data.gov.sg/v2/real-time/api/wind-direction";
+
+    async function fetchAllWindData() {
+        const grid = document.getElementById('wind-grid');
+        const errorDiv = document.getElementById('error-message');
+        errorDiv.style.display = 'none';
+
+        try {
+            const headers = { "x-api-key": API_KEY };
+            
+            // Fetch both Speed and Direction simultaneously
+            const [speedRes, dirRes] = await Promise.all([
+                fetch(SPEED_URL, { headers }),
+                fetch(DIRECTION_URL, { headers })
+            ]);
+
+            const speedData = await speedRes.json();
+            const dirData = await dirRes.json();
+
+            if (speedData.code !== 0 || dirData.code !== 0) {
+                throw new Error("API returned an error. Please check your key or connection.");
+            }
+
+            renderDashboard(speedData.data, dirData.data);
+        } catch (err) {
+            errorDiv.innerText = "Error: " + err.message;
+            errorDiv.style.display = 'block';
+            grid.innerHTML = "";
+        }
+    }
+
+    function renderDashboard(speedObj, dirObj) {
+        const grid = document.getElementById('wind-grid');
+        const timeP = document.getElementById('timestamp');
+        grid.innerHTML = "";
+
+        // Get the latest readings array
+        const speeds = speedObj.readings[0].data;
+        const directions = dirObj.readings[0].data;
+        const stations = speedObj.stations;
+
+        // Update timestamp
+        const time = new Date(speedObj.readings[0].timestamp);
+        timeP.innerText = "Last Updated: " + time.toLocaleString();
+
+        // Map data to cards
+        stations.forEach(station => {
+            const speedVal = speeds.find(s => s.stationId === station.id)?.value || "-";
+            const dirVal = directions.find(d => d.stationId === station.id)?.value || 0;
+
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <div class="station-name">${station.name}</div>
+                <div class="reading-row">
+                    <div class="value-box">
+                        <div class="label">Speed</div>
+                        <div class="value">${speedVal} <small>kn</small></div>
+                    </div>
+                    <div class="value-box">
+                        <div class="label">Direction</div>
+                        <div class="arrow" style="transform: rotate(${dirVal}deg)">↑</div>
+                        <div class="value">${dirVal}°</div>
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+
+    // Initial load
+    fetchAllWindData();
+
+    // Auto refresh every 5 minutes
+    setInterval(fetchAllWindData, 300000);
+</script>
+
+</body>
+</html>
