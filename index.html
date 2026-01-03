@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Wind Data (V2 Full Features)</title>
+    <title>Live Wind Data (Robust)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
@@ -22,8 +22,7 @@
         body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; }
         #map { height: 300px; width: 100%; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
         .chart-container { position: relative; height: 350px; }
-        .leaflet-popup-content-wrapper { background: #fff; color: #333; border-radius: 8px; }
-        .leaflet-popup-content { font-weight: 600; }
+        .leaflet-popup-content-wrapper { background: #fff; color: #333; }
         .station-list { max-height: 200px; overflow-y: auto; }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
         .live-dot { animation: pulse 1.5s infinite; }
@@ -39,25 +38,19 @@
         // --- Configuration ---
         const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
         const API_BASE = 'https://api-open.data.gov.sg/v2/real-time/api/';
-
         const CONVERSIONS = { 'knots': 1, 'm/s': 0.514444, 'km/h': 1.852 };
         const KNOT_THRESHOLDS = { SAIL: 15 };
-        const SPEED_COLORS = {
-            LEVEL_1: '#ef4444', // Red: 0-10 knots
-            LEVEL_2: '#f59e0b', // Yellow: 10-20 knots
-            LEVEL_3: '#22c55e', // Green: 20-30 knots
-            LEVEL_4: '#3b82f6', // Blue: 30+ knots
-        };
+        const SPEED_COLORS = { LEVEL_1: '#ef4444', LEVEL_2: '#f59e0b', LEVEL_3: '#22c55e', LEVEL_4: '#3b82f6' };
 
         // --- Helpers ---
-        const convertSpeed = (val, unit) => (val === undefined || val === null) ? 0 : val * CONVERSIONS[unit];
+        const convertSpeed = (val, unit) => (val == null) ? 0 : val * CONVERSIONS[unit];
         const degreesToCardinal = (deg) => {
-            if (deg === undefined || deg === null) return '';
+            if (deg == null) return '';
             const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
             return dirs[Math.round(deg / 22.5) % 16];
         };
         const getSpeedColor = (s) => {
-            if (s === undefined) return '#9ca3af';
+            if (s == null) return '#9ca3af';
             if (s < 10) return SPEED_COLORS.LEVEL_1;
             if (s < 20) return SPEED_COLORS.LEVEL_2;
             if (s < 30) return SPEED_COLORS.LEVEL_3;
@@ -67,6 +60,8 @@
             if (!date) return '';
             return `${date.getDate()}/${date.getMonth()+1} @ ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
         };
+        // Small delay helper to prevent Rate Limits
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
         // --- Chart Plugins ---
         const verticalLinePlugin = {
@@ -75,8 +70,8 @@
                 if (chart.tooltip?._active?.length) {
                     const ctx = chart.ctx;
                     const x = chart.tooltip._active[0].element.x;
-                    const topY = chart.scales.y?.top || chart.scales.y1?.top;
-                    const bottomY = chart.scales.y?.bottom || chart.scales.y1?.bottom;
+                    const topY = chart.scales.y?.top;
+                    const bottomY = chart.scales.y?.bottom;
                     if (topY !== undefined) {
                         ctx.save(); ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x, bottomY);
                         ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)'; ctx.stroke(); ctx.restore();
@@ -91,32 +86,22 @@
                 const yAxis = chart.scales.y1;
                 if (!yAxis || yAxis.id !== 'deg') return;
                 const ctx = chart.ctx;
-                const chartArea = chart.chartArea;
-                if (!chartArea) return;
-
-                // We want to draw lines at 0, 360, 720, etc.
-                // Since the axis is shifted, we iterate to find the visible "Norths"
+                const area = chart.chartArea;
+                if (!area) return;
                 const ticks = yAxis.getTicks();
                 ticks.forEach(t => {
                     if (t.value % 360 === 0) {
                         const y = yAxis.getPixelForTick(t.index);
-                        if(y >= chartArea.top && y <= chartArea.bottom) {
-                            ctx.save();
-                            ctx.beginPath();
-                            ctx.moveTo(chartArea.left, y);
-                            ctx.lineTo(chartArea.right, y);
-                            ctx.lineWidth = 1;
-                            ctx.strokeStyle = 'red';
-                            ctx.setLineDash([5, 5]);
-                            ctx.stroke();
-                            ctx.restore();
+                        if(y >= area.top && y <= area.bottom) {
+                            ctx.save(); ctx.beginPath(); ctx.moveTo(area.left, y); ctx.lineTo(area.right, y);
+                            ctx.lineWidth = 1; ctx.strokeStyle = 'red'; ctx.setLineDash([5, 5]); ctx.stroke(); ctx.restore();
                         }
                     }
                 });
             }
         };
 
-        // --- UI Components ---
+        // --- Components ---
         const Speedometer = ({ speedKnots }) => {
             const canvasRef = useRef(null);
             useEffect(() => {
@@ -130,7 +115,6 @@
                 arc(Math.PI + (Math.PI * 0.25), Math.PI + (Math.PI * 0.5), SPEED_COLORS.LEVEL_2);
                 arc(Math.PI + (Math.PI * 0.5), Math.PI + (Math.PI * 0.75), SPEED_COLORS.LEVEL_3);
                 arc(Math.PI + (Math.PI * 0.75), 2 * Math.PI, SPEED_COLORS.LEVEL_4);
-
                 const angle = Math.PI + (Math.PI * (Math.min(speedKnots || 0, 40) / 40));
                 ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(angle)*(r-5), cy + Math.sin(angle)*(r-5));
                 ctx.strokeStyle = '#333'; ctx.lineWidth = 3; ctx.stroke();
@@ -138,24 +122,21 @@
             return <canvas ref={canvasRef} width="160" height="90"></canvas>;
         };
 
-        const DirectionArrow = ({ direction, speedKnots }) => {
-            const arrowColor = getSpeedColor(speedKnots);
-            return (
-                <div className="relative w-24 h-24 flex items-center justify-center">
-                    <div style={{ transform: `rotate(${direction + 180}deg)`, transition: 'transform 0.3s ease-out' }}>
-                        <svg width="60" height="60" viewBox="0 0 100 100">
-                            <path d="M50 0 L20 40 L40 40 L40 100 L60 100 L60 40 L80 40 Z" fill={arrowColor} stroke="black" strokeWidth="5" strokeLinejoin="round" />
-                        </svg>
-                    </div>
+        const DirectionArrow = ({ direction, speedKnots }) => (
+            <div className="relative w-24 h-24 flex items-center justify-center">
+                <div style={{ transform: `rotate(${direction + 180}deg)`, transition: 'transform 0.3s ease-out' }}>
+                    <svg width="60" height="60" viewBox="0 0 100 100">
+                        <path d="M50 0 L20 40 L40 40 L40 100 L60 100 L60 40 L80 40 Z" fill={getSpeedColor(speedKnots)} stroke="black" strokeWidth="3" strokeLinejoin="round" />
+                    </svg>
                 </div>
-            );
-        };
+            </div>
+        );
 
         const DirectionAxisControls = ({ onShift, onReset }) => (
             <div className="flex items-center gap-2">
-                <button onClick={() => onShift(-45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 transition flex items-center justify-center shadow">▲</button>
+                <button onClick={() => onShift(-45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 shadow">▲</button>
                 <button onClick={onReset} className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-md hover:bg-gray-300 shadow">Reset</button>
-                <button onClick={() => onShift(45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 transition flex items-center justify-center shadow">▼</button>
+                <button onClick={() => onShift(45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 shadow">▼</button>
             </div>
         );
 
@@ -176,35 +157,31 @@
 
         // --- Main App ---
         const App = () => {
-            // State
             const [allStations, setAllStations] = useState([]);
             const [selectedStation, setSelectedStation] = useState(null);
             
-            // Separate state for Live (Fast) vs History (Slow)
+            // Separate Data Streams
             const [liveDataMap, setLiveDataMap] = useState({});
             const [chartHistory, setChartHistory] = useState({});
             
+            // UI State
             const [units, setUnits] = useState('knots');
-            const [isLoadingLive, setIsLoadingLive] = useState(true);
             const [historyStatus, setHistoryStatus] = useState(null);
-            
-            // Chart State
             const [isZoomed, setIsZoomed] = useState(false);
             const [isStationModalOpen, setStationModalOpen] = useState(false);
             const [directionCenter, setDirectionCenter] = useState(180);
             const [selectedMetrics, setSelectedMetrics] = useState(['speed', 'deg']);
             
-            // Refs
             const mapRef = useRef(null);
             const windChartRef = useRef(null);
             const windCanvasRef = useRef(null);
 
-            // 1. Live Fetch (Fast)
+            // 1. Live Data (Immediate)
             useEffect(() => {
                 const fetchLive = async () => {
                     try {
                         const headers = { "x-api-key": API_KEY };
-                        // Fetching without date gets latest snapshot immediately
+                        // Fetch latest snapshots only (no date param)
                         const [speed, deg, temp, humid] = await Promise.all([
                             fetch(`${API_BASE}wind-speed`, { headers }).then(r => r.json()),
                             fetch(`${API_BASE}wind-direction`, { headers }).then(r => r.json()),
@@ -213,12 +190,10 @@
                         ]);
 
                         if (speed.code === 0 && speed.data.stations) {
-                            // Update Station List
                             setAllStations(speed.data.stations);
                             setSelectedStation(prev => prev || speed.data.stations.find(s => s.name.includes('East Coast')) || speed.data.stations[0]);
 
-                            // Process Live Data into a Map { StationID: { speed, deg, temp, humid, time } }
-                            const extractVal = (dataset) => {
+                            const extractMap = (dataset) => {
                                 const map = {};
                                 if(dataset.data && dataset.data.readings && dataset.data.readings[0]) {
                                     dataset.data.readings[0].data.forEach(r => map[r.stationId] = r.value);
@@ -227,27 +202,22 @@
                                 return map;
                             };
                             
-                            const sMap = extractVal(speed);
-                            const dMap = extractVal(deg);
-                            const tMap = extractVal(temp);
-                            const hMap = extractVal(humid);
+                            const sMap = extractMap(speed);
+                            const dMap = extractMap(deg);
+                            const tMap = extractMap(temp);
+                            const hMap = extractMap(humid);
                             
                             const combined = {};
                             speed.data.stations.forEach(s => {
                                 combined[s.id] = {
-                                    speed: sMap[s.id],
-                                    deg: dMap[s.id],
-                                    temp: tMap[s.id],
-                                    humidity: hMap[s.id],
-                                    time: sMap._time
+                                    speed: sMap[s.id], deg: dMap[s.id], temp: tMap[s.id], humidity: hMap[s.id], time: sMap._time
                                 };
                             });
                             
                             setLiveDataMap(combined);
-                            setIsLoadingLive(false);
-
-                            // Trigger History Fetch after Live is done
-                            fetchHistory(speed.data.stations);
+                            
+                            // Start history fetch after live data is ready
+                            fetchHistoryRobust(speed.data.stations);
                         }
                     } catch (e) {
                         console.error("Live fetch error:", e);
@@ -259,84 +229,88 @@
                 return () => clearInterval(interval);
             }, []);
 
-            // 2. History Fetch (Background)
-            const fetchHistory = async (stations) => {
-                setHistoryStatus("Updating chart...");
-                try {
-                    const now = new Date();
-                    const dateStr = now.toISOString().split('T')[0];
-                    const headers = { "x-api-key": API_KEY };
+            // 2. Robust History Fetch (Throttled + Independent)
+            const fetchHistoryRobust = async (stations) => {
+                setHistoryStatus("Loading...");
+                const now = new Date();
+                const dateStr = now.toISOString().split('T')[0];
+                const headers = { "x-api-key": API_KEY };
 
-                    const fetchPaginated = async (endpoint) => {
-                        let readings = [];
-                        let url = `${API_BASE}${endpoint}?date=${dateStr}`;
-                        let page = 0;
-                        // Limit to 20 pages max to prevent freezing (enough for 6+ hours)
-                        while(url && page < 20) {
+                // A fetcher that sleeps between pages to avoid 429 errors
+                const fetchWithThrottle = async (endpoint) => {
+                    let readings = [];
+                    let url = `${API_BASE}${endpoint}?date=${dateStr}`;
+                    let page = 0;
+                    
+                    while(url && page < 20) {
+                        try {
                             const res = await fetch(url, { headers });
+                            if (res.status === 429) {
+                                // Hit rate limit? Wait 1s and retry once
+                                await sleep(1000);
+                                continue;
+                            }
                             const json = await res.json();
                             if(json.code !== 0) break;
+                            
                             if(json.data.readings) readings.push(...json.data.readings);
                             
                             if(json.data.paginationToken) {
                                 url = `${API_BASE}${endpoint}?date=${dateStr}&paginationToken=${encodeURIComponent(json.data.paginationToken)}`;
                                 page++;
+                                // THROTTLE: Sleep 300ms between pages
+                                await sleep(300);
                             } else {
                                 url = null;
                             }
+                        } catch (err) {
+                            console.warn(`Error fetching ${endpoint} page ${page}`, err);
+                            break; // Stop fetching this metric, but return what we have
                         }
-                        return readings;
-                    };
+                    }
+                    return readings;
+                };
 
-                    // Run in parallel
-                    const [speedRaw, degRaw, tempRaw, humidRaw] = await Promise.all([
-                        fetchPaginated('wind-speed'),
-                        fetchPaginated('wind-direction'),
-                        fetchPaginated('air-temperature'),
-                        fetchPaginated('relative-humidity')
-                    ]);
+                // Fetch metrics independently (if temp fails, wind still works)
+                const [speedRaw, degRaw, tempRaw, humidRaw] = await Promise.all([
+                    fetchWithThrottle('wind-speed'),
+                    fetchWithThrottle('wind-direction'),
+                    fetchWithThrottle('air-temperature'),
+                    fetchWithThrottle('relative-humidity')
+                ]);
 
-                    // Stitching logic
-                    const historyByStation = {};
-                    stations.forEach(s => historyByStation[s.id] = []);
-
-                    const timeMap = {}; // { StationID: { Timestamp: { speed, deg, temp, humid } } }
-
-                    const process = (raw, key) => {
-                        raw.forEach(batch => {
-                            const t = new Date(batch.timestamp).getTime();
-                            batch.data.forEach(r => {
-                                if(!timeMap[r.stationId]) timeMap[r.stationId] = {};
-                                if(!timeMap[r.stationId][t]) timeMap[r.stationId][t] = { time: t };
-                                timeMap[r.stationId][t][key] = r.value;
-                            });
+                // Stitch Logic
+                const timeMap = {};
+                const process = (raw, key) => {
+                    if(!raw) return;
+                    raw.forEach(batch => {
+                        const t = new Date(batch.timestamp).getTime();
+                        batch.data.forEach(r => {
+                            if(!timeMap[r.stationId]) timeMap[r.stationId] = {};
+                            if(!timeMap[r.stationId][t]) timeMap[r.stationId][t] = { time: t };
+                            timeMap[r.stationId][t][key] = r.value;
                         });
-                    };
-
-                    process(speedRaw, 'speed');
-                    process(degRaw, 'deg');
-                    process(tempRaw, 'temp');
-                    process(humidRaw, 'humidity');
-
-                    // Flatten and Sort
-                    Object.keys(timeMap).forEach(sid => {
-                        const arr = Object.values(timeMap[sid]);
-                        arr.sort((a,b) => a.time - b.time);
-                        // Filter last 6 hours
-                        const cutoff = now.getTime() - (6 * 60 * 60 * 1000);
-                        historyByStation[sid] = arr.filter(d => d.time >= cutoff);
                     });
+                };
 
-                    setChartHistory(historyByStation);
-                    setHistoryStatus(null);
-                } catch (e) {
-                    console.error(e);
-                    setHistoryStatus("Chart update failed");
-                }
+                process(speedRaw, 'speed');
+                process(degRaw, 'deg');
+                process(tempRaw, 'temp');
+                process(humidRaw, 'humidity');
+
+                const historyByStation = {};
+                stations.forEach(s => {
+                    const arr = timeMap[s.id] ? Object.values(timeMap[s.id]) : [];
+                    arr.sort((a,b) => a.time - b.time);
+                    const cutoff = now.getTime() - (6 * 60 * 60 * 1000);
+                    historyByStation[s.id] = arr.filter(d => d.time >= cutoff);
+                });
+
+                setChartHistory(historyByStation);
+                setHistoryStatus(null);
             };
 
-
-            // 3. Map Logic
+            // 3. Map & Chart Logic
             useEffect(() => {
                 if (isStationModalOpen && !mapRef.current) {
                     setTimeout(() => {
@@ -353,7 +327,6 @@
                 return () => { if (!isStationModalOpen && mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
             }, [isStationModalOpen, allStations]);
 
-            // 4. Chart Logic (Restored full axis control)
             useEffect(() => {
                 const canvas = windCanvasRef.current;
                 if (!canvas || !selectedStation) return;
@@ -361,8 +334,9 @@
                 setIsZoomed(false);
 
                 const data = chartHistory[selectedStation.id] || [];
-                if (data.length === 0 && !liveDataMap[selectedStation.id]) return;
-
+                // If we have live data but history failed/is loading, we can at least show the live point? 
+                // For now, let's just wait for history.
+                
                 const metricConfigs = {
                     speed: {
                         key: 'speed', label: `Wind Speed (${units})`, color: 'black', yAxisID: 'y',
@@ -372,7 +346,6 @@
                     deg: {
                         key: 'deg', label: 'Wind Direction (°)', color: 'red', yAxisID: 'y1',
                         data: data.map(d => {
-                            // Logic to prevent jumping lines around 360/0
                             if (d.deg === undefined) return { x: d.time, y: null };
                             let val = d.deg;
                             const diff = val - directionCenter;
@@ -400,7 +373,7 @@
                 };
 
                 const datasets = [];
-                const scales = { x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } } } };
+                const scales = { x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } } } };
 
                 if (selectedMetrics[0]) {
                     const m1 = metricConfigs[selectedMetrics[0]];
@@ -425,16 +398,11 @@
                                 pan: { enabled: true, mode: 'x' },
                                 zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x', onZoomComplete: () => setIsZoomed(true) }
                             },
-                            tooltip: {
-                                callbacks: {
-                                    title: (items) => { const d = new Date(items[0].parsed.x); return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; }
-                                }
-                            }
+                            tooltip: { callbacks: { title: (items) => { const d = new Date(items[0].parsed.x); return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; } } }
                         }
                     },
                     plugins: [verticalLinePlugin, northLinePlugin]
                 });
-
             }, [chartHistory, selectedStation, units, directionCenter, selectedMetrics]);
 
             const handleResetZoom = () => { if (windChartRef.current) { windChartRef.current.resetZoom(); setIsZoomed(false); } };
@@ -466,7 +434,7 @@
                         <header className="mb-6 flex justify-between items-center">
                             <div>
                                 <h1 className="text-2xl font-bold text-gray-800">Live Wind Data</h1>
-                                <p className="text-lg text-gray-600 mt-1">Official Data (V2) - Full Features</p>
+                                <p className="text-lg text-gray-600 mt-1">Official Data (V2) - Robust</p>
                             </div>
                             <button onClick={()=>setStationModalOpen(true)} className="bg-white px-4 py-2 rounded-lg shadow hover:bg-gray-200 transition font-semibold">
                                 {selectedStation ? selectedStation.name : 'Select Station'}
@@ -480,7 +448,7 @@
                         )}
 
                         <div className="flex flex-col gap-8">
-                            {/* Card 1: Live Data */}
+                            {/* Card 1: Live */}
                             <div className="bg-white p-6 rounded-xl shadow-lg">
                                 <div className="mb-4">
                                     <h2 className="text-2xl font-semibold text-gray-700">
@@ -491,9 +459,7 @@
                                         <span>{current.time ? formatTimestamp(current.time) : 'Connecting...'}</span>
                                     </div>
                                 </div>
-
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {/* Wind Block */}
                                     <div className="p-4 bg-gray-50 rounded-lg">
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="flex flex-col items-center">
@@ -515,8 +481,6 @@
                                             {Object.keys(CONVERSIONS).map(u => <button key={u} onClick={()=>setUnits(u)} className={`px-3 py-1 text-sm font-semibold rounded-md transition ${units===u ? 'bg-white text-blue-600 shadow' : 'text-gray-600'}`}>{u}</button>)}
                                         </div>
                                     </div>
-                                    
-                                    {/* Temp/Humidity Block (RESTORED) */}
                                     <div className="p-4 bg-gray-50 rounded-lg flex flex-col justify-center items-center">
                                         <div className="text-center text-xs text-gray-500">Live Conditions</div>
                                         <div className="flex items-center gap-6 mt-4">
@@ -535,7 +499,7 @@
                                 </div>
                             </div>
 
-                            {/* Card 2: History (RESTORED AXIS CONTROLS) */}
+                            {/* Card 2: History */}
                             <div className="bg-white p-6 rounded-xl shadow-lg">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-lg font-semibold text-gray-700">
@@ -551,21 +515,19 @@
                                 </div>
                             </div>
 
-                            {/* Card 3: About Data (RESTORED) */}
+                            {/* Card 3: About */}
                             <div className="bg-white p-6 rounded-xl shadow-lg">
                                 <h3 className="text-lg font-semibold text-gray-700 mb-4">About The Data</h3>
                                 <ul className="space-y-2 text-sm text-gray-600">
                                     <li><p>This application displays real-time wind data sourced directly from the National Environment Agency (NEA) via data.gov.sg (V2 API).</p></li>
-                                    <li><p><strong>Wind Speed and Direction:</strong> The data shown is the 10-minute average.</p></li>
-                                    <li><p><strong>Update Frequency:</strong> Data is updated every minute by the API.</p></li>
+                                    <li><p><strong>Update Frequency:</strong> Data is typically updated every 5 minutes.</p></li>
                                 </ul>
                                 <div className="mt-4 pt-4 border-t">
                                      <a href="https://data.gov.sg/collections/1459/view" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-                                         For reference, please refer to: https://data.gov.sg/collections/1459/view
+                                         Reference: https://data.gov.sg/collections/1459/view
                                      </a>
                                 </div>
                             </div>
-
                         </div>
                     </div>
                 </div>
