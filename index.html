@@ -3,126 +3,749 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Singapore Live Wind Tracker</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; padding: 20px; color: #333; }
-        .container { max-width: 900px; margin: 0 auto; }
-        header { text-align: center; margin-bottom: 30px; }
-        .refresh-btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        .refresh-btn:hover { background: #0056b3; }
-        
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
-        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; flex-direction: column; align-items: center; }
-        .station-name { font-weight: bold; font-size: 1.1em; margin-bottom: 10px; color: #2c3e50; text-align: center; }
-        
-        .reading-row { display: flex; width: 100%; justify-content: space-around; align-items: center; }
-        .value-box { text-align: center; }
-        .label { font-size: 0.8em; color: #7f8c8d; text-transform: uppercase; }
-        .value { font-size: 1.2em; font-weight: bold; }
+    <title>SG Live Wind Data (v2 API)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.min.js"></script>
 
-        /* Wind Direction Arrow */
-        .arrow { font-size: 24px; transition: transform 0.5s ease-in-out; display: inline-block; color: #e67e22; }
+
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        #map { height: 300px; width: 100%; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
+        .chart-container { position: relative; height: 350px; }
+        .leaflet-popup-content-wrapper { background: #fff; color: #333; border-radius: 8px; }
+        .leaflet-popup-content { font-weight: 600; }
+        .leaflet-popup-tip { background: #fff; }
+        .station-list { max-height: 200px; overflow-y: auto; }
         
-        .loading { text-align: center; font-style: italic; color: #666; }
-        .error { color: #d9534f; background: #fdf7f7; padding: 10px; border-radius: 5px; text-align: center; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .live-dot {
+            animation: pulse 1.5s infinite;
+        }
+        input[type="checkbox"]:disabled + label {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
     </style>
 </head>
 <body>
+    <div id="root"></div>
 
-<div class="container">
-    <header>
-        <h1>SG Live Wind Readings</h1>
-        <p id="timestamp">Loading latest data...</p>
-        <button class="refresh-btn" onclick="fetchAllWindData()">Refresh Data</button>
-    </header>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
 
-    <div id="error-message" class="error" style="display:none;"></div>
-    <div id="wind-grid" class="grid">
-        <div class="loading">Fetching data from data.gov.sg...</div>
-    </div>
-</div>
+        // --- Constants ---
+        // V2 API CONFIGURATION
+        const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
+        const API_BASE = 'https://api-open.data.gov.sg/v2/real-time/api/';
+        
+        const CONVERSIONS = {
+            'knots': 1,
+            'm/s': 0.514444,
+            'km/h': 1.852,
+        };
+        const KNOT_THRESHOLDS = { SAIL: 15 };
+        const SPEED_COLORS = {
+            LEVEL_1: '#ef4444', // Red: 0-10 knots
+            LEVEL_2: '#f59e0b', // Yellow: 10-20 knots
+            LEVEL_3: '#22c55e', // Green: 20-30 knots
+            LEVEL_4: '#3b82f6', // Blue: 30+ knots
+        };
 
-<script>
-    // Your API Key for higher rate limits
-    const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
-    
-    const SPEED_URL = "https://api-open.data.gov.sg/v2/real-time/api/wind-speed";
-    const DIRECTION_URL = "https://api-open.data.gov.sg/v2/real-time/api/wind-direction";
+        // --- Helper Functions ---
+        const convertSpeed = (speed_knots, unit) => {
+            if (speed_knots === undefined || speed_knots === null) return 0;
+            return speed_knots * CONVERSIONS[unit];
+        };
+        
+        const degreesToCardinal = (deg) => {
+            if (deg === undefined || deg === null) return '';
+            const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+            const index = Math.round(deg / 22.5) % 16;
+            return directions[index];
+        };
 
-    async function fetchAllWindData() {
-        const grid = document.getElementById('wind-grid');
-        const errorDiv = document.getElementById('error-message');
-        errorDiv.style.display = 'none';
+        const getSpeedColor = (speed_knots) => {
+            if (speed_knots === undefined) return '#9ca3af';
+            if (speed_knots < 10) return SPEED_COLORS.LEVEL_1;
+            if (speed_knots < 20) return SPEED_COLORS.LEVEL_2;
+            if (speed_knots < 30) return SPEED_COLORS.LEVEL_3;
+            return SPEED_COLORS.LEVEL_4;
+        };
 
-        try {
-            const headers = { "x-api-key": API_KEY };
-            
-            // Fetch both Speed and Direction simultaneously
-            const [speedRes, dirRes] = await Promise.all([
-                fetch(SPEED_URL, { headers }),
-                fetch(DIRECTION_URL, { headers })
-            ]);
+        const formatTimestamp = (date) => {
+            if (!date) return '';
+            const options = { day: '2-digit', month: 'short', year: 'numeric' };
+            const datePart = date.toLocaleDateString('en-GB', options);
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            return `${datePart} @ ${hours}:${minutes}`;
+        };
 
-            const speedData = await speedRes.json();
-            const dirData = await dirRes.json();
+        const verticalLinePlugin = {
+            id: 'customVerticalLine',
+            beforeDatasetsDraw: chart => {
+                if (chart.tooltip?._active?.length) {
+                    const ctx = chart.ctx;
+                    const activePoint = chart.tooltip._active[0];
+                    const x = activePoint.element.x;
+                    const topY = chart.scales.y?.top || chart.scales.y1?.top;
+                    const bottomY = chart.scales.y?.bottom || chart.scales.y1?.bottom;
 
-            if (speedData.code !== 0 || dirData.code !== 0) {
-                throw new Error("API returned an error. Please check your key or connection.");
+                    if (topY !== undefined && bottomY !== undefined) {
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(x, topY);
+                        ctx.lineTo(x, bottomY);
+                        ctx.lineWidth = 1;
+                        ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
             }
+        };
+        
+        const northLinePlugin = {
+            id: 'northLine',
+            afterDraw: chart => {
+                const yAxis = chart.scales.y1;
+                if (!yAxis || yAxis.id !== 'deg') return;
+                const ctx = chart.ctx;
+                const chartArea = chart.chartArea;
 
-            renderDashboard(speedData.data, dirData.data);
-        } catch (err) {
-            errorDiv.innerText = "Error: " + err.message;
-            errorDiv.style.display = 'block';
-            grid.innerHTML = "";
-        }
-    }
+                if (!chartArea) return;
 
-    function renderDashboard(speedObj, dirObj) {
-        const grid = document.getElementById('wind-grid');
-        const timeP = document.getElementById('timestamp');
-        grid.innerHTML = "";
+                let yNorth;
+                const ticks = yAxis.getTicks();
+                // Find a tick that represents 0, 360, 720 etc.
+                const zeroTick = ticks.find(t => (t.value % 360) === 0);
+                
+                if(zeroTick) {
+                    yNorth = yAxis.getPixelForTick(zeroTick.index);
+                } else {
+                    return; // North is not visible
+                }
 
-        // Get the latest readings array
-        const speeds = speedObj.readings[0].data;
-        const directions = dirObj.readings[0].data;
-        const stations = speedObj.stations;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(chartArea.left, yNorth);
+                ctx.lineTo(chartArea.right, yNorth);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = 'red';
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                ctx.restore();
+            }
+        };
 
-        // Update timestamp
-        const time = new Date(speedObj.readings[0].timestamp);
-        timeP.innerText = "Last Updated: " + time.toLocaleString();
 
-        // Map data to cards
-        stations.forEach(station => {
-            const speedVal = speeds.find(s => s.stationId === station.id)?.value || "-";
-            const dirVal = directions.find(d => d.stationId === station.id)?.value || 0;
+        // --- UI Components ---
+        const Speedometer = ({ speedKnots }) => {
+            const canvasRef = useRef(null);
+            const maxSpeed = 40;
 
-            const card = document.createElement('div');
-            card.className = 'card';
-            card.innerHTML = `
-                <div class="station-name">${station.name}</div>
-                <div class="reading-row">
-                    <div class="value-box">
-                        <div class="label">Speed</div>
-                        <div class="value">${speedVal} <small>kn</small></div>
-                    </div>
-                    <div class="value-box">
-                        <div class="label">Direction</div>
-                        <div class="arrow" style="transform: rotate(${dirVal}deg)">↑</div>
-                        <div class="value">${dirVal}°</div>
+            useEffect(() => {
+                const canvas = canvasRef.current; if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const { width, height } = canvas;
+                const centerX = width / 2;
+                const centerY = height - 20;
+                const radius = width / 2 - 20;
+
+                ctx.clearRect(0, 0, width, height);
+
+                const drawArc = (start, end, color) => {
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius, start, end);
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 12;
+                    ctx.stroke();
+                };
+
+                drawArc(Math.PI, Math.PI + (Math.PI * (10/maxSpeed)), SPEED_COLORS.LEVEL_1);
+                drawArc(Math.PI + (Math.PI * (10/maxSpeed)), Math.PI + (Math.PI * (20/maxSpeed)), SPEED_COLORS.LEVEL_2);
+                drawArc(Math.PI + (Math.PI * (20/maxSpeed)), Math.PI + (Math.PI * (30/maxSpeed)), SPEED_COLORS.LEVEL_3);
+                drawArc(Math.PI + (Math.PI * (30/maxSpeed)), 2 * Math.PI, SPEED_COLORS.LEVEL_4);
+
+                const angle = Math.PI + (Math.PI * (Math.min(speedKnots || 0, maxSpeed) / maxSpeed));
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(centerX + Math.cos(angle) * (radius - 5), centerY + Math.sin(angle) * (radius - 5));
+                ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 3; ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI);
+                ctx.fillStyle = '#1f2937'; ctx.fill();
+            }, [speedKnots]);
+
+            return <canvas ref={canvasRef} width="160" height="90"></canvas>;
+        };
+
+        const DirectionArrow = ({ direction, speedKnots }) => {
+            const arrowColor = getSpeedColor(speedKnots);
+            const rotationStyle = { transform: `rotate(${direction + 180}deg)`, transition: 'transform 0.3s ease-out' };
+            return (
+                <div className="relative w-24 h-24 flex items-center justify-center">
+                    <div style={rotationStyle}>
+                        <svg width="60" height="60" viewBox="0 0 100 100">
+                            <path d="M50 0 L20 40 L40 40 L40 100 L60 100 L60 40 L80 40 Z" fill={arrowColor} stroke="black" strokeWidth="5" strokeLinejoin="round" />
+                        </svg>
                     </div>
                 </div>
-            `;
-            grid.appendChild(card);
-        });
-    }
+            );
+        };
+        
+        const DirectionAxisControls = ({ onShift, onReset }) => {
+            return (
+                <div className="flex items-center gap-2">
+                    <button onClick={() => onShift(-45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 transition flex items-center justify-center shadow">▲</button>
+                    <button onClick={onReset} className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-md hover:bg-gray-300 shadow">Reset</button>
+                    <button onClick={() => onShift(45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 transition flex items-center justify-center shadow">▼</button>
+                </div>
+            );
+        };
+        
+        const ChartFilters = ({ selected, onToggle, disabled }) => {
+            const metrics = {
+                speed: 'Wind Speed',
+                deg: 'Wind Direction',
+                temp: 'Temperature',
+                humidity: 'Humidity'
+            };
 
-    // Initial load
-    fetchAllWindData();
+            return (
+                <div className="flex flex-wrap gap-x-4 gap-y-2 mb-4">
+                    <span className="text-sm font-semibold text-gray-600 self-center">Compare Any 2 Metrics:</span>
+                    {Object.keys(metrics).map(key => (
+                        <div key={key} className="flex items-center">
+                            <input
+                                type="checkbox"
+                                id={`metric-${key}`}
+                                checked={selected.includes(key)}
+                                onChange={() => onToggle(key)}
+                                disabled={disabled && !selected.includes(key)}
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <label htmlFor={`metric-${key}`} className="ml-2 text-sm text-gray-700">{metrics[key]}</label>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
 
-    // Auto refresh every 5 minutes
-    setInterval(fetchAllWindData, 300000);
-</script>
 
+        // --- Main App Component ---
+        const App = () => {
+            // State management
+            const [allStations, setAllStations] = useState([]);
+            const [selectedStation, setSelectedStation] = useState(null);
+            const [chartHistory, setChartHistory] = useState({});
+            const [error, setError] = useState(null);
+            const [units, setUnits] = useState('knots');
+            const [isLoading, setIsLoading] = useState(true);
+            const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+            const [isZoomed, setIsZoomed] = useState(false);
+            const [isStationModalOpen, setStationModalOpen] = useState(false);
+            const [directionCenter, setDirectionCenter] = useState(180);
+            const [selectedMetrics, setSelectedMetrics] = useState(['speed', 'deg']);
+
+            // Refs
+            const mapRef = useRef(null);
+            const windChartRef = useRef(null);
+            const windCanvasRef = useRef(null);
+            const markerLayerRef = useRef(null);
+
+            // --- V2 API FETCHING LOGIC ---
+            useEffect(() => {
+                const fetchAllData = async (isInitialLoad) => {
+                    if (isInitialLoad) {
+                        setIsLoading(true);
+                        setIsHistoryLoading(true);
+                    }
+                    setError(null);
+                    
+                    try {
+                        const now = new Date();
+                        // For v2, we query by date to get history for the day
+                        const dateStr = now.toISOString().split('T')[0]; 
+                        const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+                        const yesterdayStr = sixHoursAgo.toISOString().split('T')[0];
+                        
+                        const endpoints = {
+                            speed: 'wind-speed',
+                            deg: 'wind-direction',
+                            temp: 'air-temperature',
+                            humidity: 'relative-humidity'
+                        };
+
+                        const headers = { "x-api-key": API_KEY };
+                        
+                        // We need to fetch data for Today. If it's early morning, we might need yesterday's data too.
+                        const datesToFetch = [dateStr];
+                        if (dateStr !== yesterdayStr) datesToFetch.push(yesterdayStr);
+
+                        const fetchMetric = async (metric, type) => {
+                             // Fetch for all required dates
+                             const requests = datesToFetch.map(d => 
+                                 fetch(`${API_BASE}${type}?date=${d}`, { headers }).then(res => {
+                                     if (!res.ok) return { code: -1, data: null }; // Soft fail for temp/humidity if not existing
+                                     return res.json();
+                                 })
+                             );
+                             
+                             const results = await Promise.all(requests);
+                             // Merge results from multiple days
+                             let mergedReadings = [];
+                             let stationsData = [];
+                             
+                             results.forEach(res => {
+                                 if (res.code === 0 && res.data) {
+                                     if(res.data.stations) stationsData = res.data.stations; // Keep latest stations
+                                     if(res.data.readings) mergedReadings = [...mergedReadings, ...res.data.readings];
+                                 }
+                             });
+                             
+                             return { stations: stationsData, readings: mergedReadings };
+                        };
+
+                        const [speedData, degData, tempData, humidData] = await Promise.all([
+                            fetchMetric('speed', endpoints.speed),
+                            fetchMetric('deg', endpoints.deg),
+                            fetchMetric('temp', endpoints.temp),
+                            fetchMetric('humidity', endpoints.humidity)
+                        ]);
+
+                        if (speedData.stations.length === 0) throw new Error("Unable to fetch Wind Speed data from V2 API.");
+
+                        // --- DATA PARSING & STITCHING (The heavy lifting) ---
+                        
+                        // 1. Process Stations
+                        // V2 stations array: [{ id, name, location: { latitude, longitude } }]
+                        if (isInitialLoad) {
+                            setAllStations(speedData.stations);
+                            if (speedData.stations.length > 0) {
+                                const defaultStation = speedData.stations.find(s => s.name === 'East Coast Parkway') || speedData.stations[0];
+                                setSelectedStation(defaultStation);
+                            }
+                        }
+
+                        // 2. Stitch readings by Time and Station
+                        // Format: { StationID: [ { time, speed, deg, temp, humidity } ] }
+                        const newHistory = {};
+                        
+                        // Helper to process a specific metric type into the history object
+                        const processMetricReadings = (metricData, keyName) => {
+                            if (!metricData.readings) return;
+                            metricData.readings.forEach(batch => {
+                                const timestamp = new Date(batch.timestamp);
+                                batch.data.forEach(record => {
+                                    const stId = record.stationId;
+                                    if (!newHistory[stId]) newHistory[stId] = {};
+                                    // Use timestamp string as temporary key for stitching
+                                    const timeKey = timestamp.toISOString();
+                                    if (!newHistory[stId][timeKey]) {
+                                        newHistory[stId][timeKey] = { time: timestamp };
+                                    }
+                                    newHistory[stId][timeKey][keyName] = record.value;
+                                });
+                            });
+                        };
+
+                        processMetricReadings(speedData, 'speed');
+                        processMetricReadings(degData, 'deg');
+                        processMetricReadings(tempData, 'temp');
+                        processMetricReadings(humidData, 'humidity');
+
+                        // Convert object map to sorted array
+                        const finalChartData = {};
+                        Object.keys(newHistory).forEach(stId => {
+                            const readingsArray = Object.values(newHistory[stId]);
+                            readingsArray.sort((a, b) => a.time - b.time);
+                            // Filter for last 6 hours or valid data range
+                            finalChartData[stId] = readingsArray.filter(r => r.time >= sixHoursAgo);
+                        });
+
+                        setChartHistory(finalChartData);
+                        setIsLoading(false);
+                        setIsHistoryLoading(false);
+
+                    } catch (e) {
+                        console.error(e);
+                        setError(e.message || "Error fetching data");
+                        setIsLoading(false);
+                        setIsHistoryLoading(false);
+                    }
+                };
+                
+                fetchAllData(true);
+                const intervalId = setInterval(() => fetchAllData(false), 60000); // Update every minute
+                return () => clearInterval(intervalId);
+            }, []);
+            
+            useEffect(() => {
+                if (isStationModalOpen) {
+                    const timer = setTimeout(() => {
+                        const map = L.map('map').setView([1.3521, 103.8198], 11);
+                        mapRef.current = map;
+                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        }).addTo(map);
+
+                        const newMarkerLayer = L.layerGroup().addTo(map);
+                        allStations.forEach(station => {
+                            const marker = L.marker([station.location.latitude, station.location.longitude]).addTo(newMarkerLayer);
+                            marker.bindTooltip(`<b>${station.name}</b>`);
+                            marker.on('click', () => {
+                                setSelectedStation(station);
+                                setStationModalOpen(false);
+                            });
+                        });
+                        markerLayerRef.current = newMarkerLayer;
+                    }, 100);
+
+                    return () => {
+                        clearTimeout(timer);
+                        if (mapRef.current) {
+                            mapRef.current.remove();
+                            mapRef.current = null;
+                        }
+                    };
+                }
+            }, [isStationModalOpen, allStations]);
+
+            useEffect(() => {
+                const canvas = windCanvasRef.current;
+                if (!canvas) return;
+                
+                const currentHistory = selectedStation ? (chartHistory[selectedStation.id] || []) : [];
+                
+                if (windChartRef.current) {
+                    windChartRef.current.destroy();
+                    windChartRef.current = null;
+                }
+                
+                setIsZoomed(false);
+
+                if (currentHistory.length > 0 && selectedMetrics.length > 0) {
+                    const metricConfigs = {
+                        speed: {
+                            key: 'speed',
+                            label: `Wind Speed (${units})`,
+                            color: 'black',
+                            data: currentHistory.map(d => convertSpeed(d.speed, units)),
+                            yAxisID: 'y',
+                            getScale: () => {
+                                const maxVal = Math.max(...currentHistory.map(d => d.speed).filter(s => s !== undefined));
+                                const yMax = Math.ceil(maxVal / 8) * 8 || 8;
+                                return {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'left',
+                                    beginAtZero: true,
+                                    max: convertSpeed(yMax, units),
+                                    ticks: { stepSize: convertSpeed(yMax / 8, units) }
+                                };
+                            }
+                        },
+                        deg: {
+                            key: 'deg',
+                            label: 'Wind Direction (°)',
+                            color: 'red',
+                            data: currentHistory.map(d => {
+                                if (d.deg === undefined) return null;
+                                const diff = d.deg - directionCenter;
+                                if (diff > 180) return d.deg - 360;
+                                if (diff < -180) return d.deg + 360;
+                                return d.deg;
+                            }),
+                            yAxisID: 'y1',
+                             getScale: () => ({
+                                id: 'deg',
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                min: directionCenter - 180,
+                                max: directionCenter + 180,
+                                title: { display: true, text: 'Direction (°)' },
+                                ticks: {
+                                    stepSize: 45,
+                                    callback: v => (Math.round(v / 45) * 45 + 360) % 360
+                                }
+                            })
+                        },
+                        temp: {
+                            key: 'temp',
+                            label: 'Temperature (°C)',
+                            color: 'orange',
+                            data: currentHistory.map(d => d.temp),
+                            yAxisID: 'y',
+                            getScale: () => ({
+                                type: 'linear',
+                                display: true,
+                                position: 'left'
+                            })
+                        },
+                        humidity: {
+                            key: 'humidity',
+                            label: 'Humidity (%)',
+                            color: 'blue',
+                            data: currentHistory.map(d => d.humidity),
+                            yAxisID: 'y1',
+                            getScale: () => ({
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                min: 0,
+                                max: 100
+                            })
+                        },
+                    };
+
+                    const datasets = [];
+                    const scales = { x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } } } };
+                    
+                    if (selectedMetrics[0]) {
+                        const m1 = metricConfigs[selectedMetrics[0]];
+                        datasets.push({ label: m1.label, data: m1.data, borderColor: m1.color, yAxisID: 'y', pointRadius: 2 });
+                        scales.y = { ...m1.getScale(), position: 'left' };
+                    }
+                    
+                    if (selectedMetrics[1]) {
+                        const m2 = metricConfigs[selectedMetrics[1]];
+                        datasets.push({ label: m2.label, data: m2.data, borderColor: m2.color, yAxisID: 'y1', pointRadius: 2 });
+                        scales.y1 = { ...m2.getScale(), position: 'right' };
+                    }
+
+
+                    windChartRef.current = new Chart(canvas.getContext('2d'), {
+                        type: 'line', 
+                        data: { labels: currentHistory.map(d => d.time), datasets },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            scales,
+                            plugins: { 
+                                tooltip: { 
+                                    mode: 'index', 
+                                    intersect: false,
+                                     callbacks: {
+                                         title: (tooltipItems) => {
+                                             const date = new Date(tooltipItems[0].parsed.x);
+                                             return `${date.getHours().toString().padStart(2, '0')}${date.getMinutes().toString().padStart(2, '0')}h`;
+                                         },
+                                         label: function(context) {
+                                             const metricKey = selectedMetrics[context.datasetIndex];
+                                             const originalValue = currentHistory[context.dataIndex][metricKey];
+                                             let unit = '';
+                                             if (metricKey === 'speed') unit = units;
+                                             if (metricKey === 'deg') unit = '°';
+                                             if (metricKey === 'temp') unit = '°C';
+                                             if (metricKey === 'humidity') unit = '%';
+
+                                             let valueToShow = context.parsed.y;
+                                             if (metricKey === 'deg') valueToShow = originalValue;
+                                             if (metricKey === 'humidity') valueToShow = originalValue;
+                                             
+                                             return `${context.dataset.label}: ${valueToShow !== undefined && valueToShow !== null ? valueToShow.toFixed(metricKey === 'speed' ? 2 : 0) : 'N/A'} ${unit}`;
+                                         }
+                                     }
+                                },
+                                zoom: {
+                                    pan: { enabled: true, mode: 'x' },
+                                    zoom: { 
+                                        wheel: { enabled: true }, 
+                                        pinch: { enabled: true }, 
+                                        drag: { enabled: true }, 
+                                        mode: 'x', 
+                                        onZoomComplete: () => setIsZoomed(true) 
+                                    }
+                                }
+                            }
+                        },
+                        plugins: [verticalLinePlugin, northLinePlugin]
+                    });
+                }
+            }, [chartHistory, selectedStation, units, directionCenter, selectedMetrics]);
+            
+            const handleResetZoom = () => {
+                if (windChartRef.current) {
+                    windChartRef.current.resetZoom();
+                    setIsZoomed(false);
+                }
+            };
+
+            const handleAxisShift = (amount) => {
+                setDirectionCenter(prev => (prev + amount + 360) % 360);
+            };
+
+            const handleMetricToggle = (metricKey) => {
+                setSelectedMetrics(prev => {
+                    const isSelected = prev.includes(metricKey);
+                    if (isSelected) {
+                        return prev.filter(m => m !== metricKey);
+                    } else if (prev.length < 2) {
+                        return [...prev, metricKey];
+                    }
+                    return prev;
+                });
+            };
+
+            const currentHistory = selectedStation ? (chartHistory[selectedStation.id] || []) : [];
+            const currentReading = currentHistory && currentHistory.length > 0 ? currentHistory[currentHistory.length - 1] : {};
+
+            return (
+                <div className="min-h-screen bg-gray-100 p-4 sm:p-6 lg:p-8">
+                    {isStationModalOpen && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]" onClick={() => setStationModalOpen(false)}>
+                            <div className="bg-white p-6 rounded-xl shadow-lg w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-2xl font-semibold text-gray-700">Select Station</h2>
+                                    <button onClick={() => setStationModalOpen(false)} className="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+                                </div>
+                                <div id="map"></div>
+                                <div className="station-list mt-4 border-t pt-2">
+                                    {allStations.length > 0 ? (
+                                        allStations.sort((a,b) => a.name.localeCompare(b.name)).map(station => (
+                                            <div key={station.id} onClick={() => { setSelectedStation(station); setStationModalOpen(false); }} className={`p-2 rounded-md cursor-pointer hover:bg-blue-100 ${selectedStation?.id === station.id ? 'bg-blue-200 font-bold' : ''}`}>
+                                                {station.name}
+                                            </div>
+                                        ))
+                                    ) : ( <p className="text-gray-500">{isLoading ? 'Loading stations...' : 'No stations found.'}</p> )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="max-w-7xl mx-auto">
+                        <header className="mb-6 flex justify-between items-center">
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-800">Live Wind Data</h1>
+                                <p className="text-lg text-gray-600 mt-1">from Data.gov.sg (v2 API)</p>
+                            </div>
+                            <button onClick={() => setStationModalOpen(true)} className="bg-white px-4 py-2 rounded-lg shadow hover:bg-gray-200 transition text-sm text-gray-700 font-semibold">Select Station</button>
+                        </header>
+                        
+                        {(currentReading.speed > KNOT_THRESHOLDS.SAIL) && (
+                            <div className="bg-green-500 text-white text-center font-bold p-4 rounded-lg mb-6 text-xl shadow-lg animate-pulse">
+                                Wind is Great! Stop working and start sailing! ⛵
+                            </div>
+                        )}
+                        
+                        <div className="flex flex-col gap-8">
+                            {/* Card 1: Live Data */}
+                            <div className="bg-white p-6 rounded-xl shadow-lg">
+                                <div className="mb-4">
+                                    <h2 className="text-2xl font-semibold text-gray-700 truncate pr-2">
+                                        <span className="text-blue-600">{selectedStation?.name || 'Loading...'}</span>
+                                    </h2>
+                                    <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
+                                        <div className="w-3 h-3 bg-red-500 rounded-full live-dot"></div>
+                                        <span>{currentReading.time ? formatTimestamp(currentReading.time) : 'Connecting...'}</span>
+                                    </div>
+                                </div>
+                                {error && <div className="text-red-600 bg-red-100 p-3 rounded-lg my-2">{error}</div>}
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                        <div className="grid grid-cols-2 gap-4">
+                                             <div className="flex flex-col items-center justify-center">
+                                                <div className="text-center mb-2">
+                                                    <div className="text-xs text-gray-500">Direction</div>
+                                                    <div className="text-xl font-bold text-gray-800">{currentReading.deg !== undefined ? currentReading.deg + '° ' + degreesToCardinal(currentReading.deg) : '-'}</div>
+                                                </div>
+                                                <DirectionArrow direction={currentReading.deg || 0} speedKnots={currentReading.speed} />
+                                            </div>
+                                            <div className="flex flex-col items-center justify-center">
+                                                <div className="text-center mb-2">
+                                                    <div className="text-xs text-gray-500">Speed</div>
+                                                    <div className="text-xl font-bold text-gray-800">{currentReading.speed !== undefined ? convertSpeed(currentReading.speed, units).toFixed(1) : '-'} <span className="text-sm font-normal">{units}</span></div>
+                                                </div>
+                                                <Speedometer speedKnots={currentReading.speed} />
+                                            </div>
+                                        </div>
+                                         <div className="flex justify-center mt-4">
+                                            <div className="flex space-x-1 rounded-lg bg-gray-200 p-1">
+                                                {Object.keys(CONVERSIONS).map(u => <button key={u} onClick={() => setUnits(u)} className={`px-3 py-1 text-sm font-semibold rounded-md transition ${units === u ? 'bg-white text-blue-600 shadow' : 'text-gray-600 hover:bg-gray-300'}`}>{u}</button>)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-lg flex flex-col justify-center items-center">
+                                        <div className="text-center text-xs text-gray-500">Live Conditions</div>
+                                        <div className="flex items-center gap-6 mt-4">
+                                            <div className="text-center">
+                                                 <svg className="w-10 h-10 mx-auto text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16V6a1 1 0 00-1-1H9a1 1 0 00-1 1v10a5 5 0 0010 0v-2.5a.5.5 0 00-.5-.5h-1a.5.5 0 00-.5.5V16a3 3 0 01-6 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 4a1 1 0 011-1h2a1 1 0 011 1v1a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path></svg>
+                                                <div className="text-2xl font-bold mt-2">{currentReading.temp !== undefined ? currentReading.temp.toFixed(1) + '°C' : '-'}</div>
+                                                <div className="text-xs text-gray-500">Temperature</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <svg className="w-10 h-10 mx-auto text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.8M9 19l3 3m0 0l3-3m-3 3V10"></path></svg>
+                                                <div className="text-2xl font-bold mt-2">{currentReading.humidity !== undefined ? currentReading.humidity.toFixed(0) + '%' : '-'}</div>
+                                                <div className="text-xs text-gray-500">Humidity</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Card 2: 6-Hour History */}
+                            <div className="bg-white p-6 rounded-xl shadow-lg">
+                               <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-lg font-semibold text-gray-700">6-Hour History</h3>
+                                    {selectedMetrics.includes('deg') && <DirectionAxisControls onShift={handleAxisShift} onReset={() => setDirectionCenter(180)} />}
+                                    {isZoomed && <button onClick={handleResetZoom} className="text-sm bg-blue-500 text-white py-1 px-3 rounded-lg hover:bg-blue-600 transition">Reset Zoom</button>}
+                                </div>
+                                <ChartFilters selected={selectedMetrics} onToggle={handleMetricToggle} disabled={selectedMetrics.length >= 2} />
+                                <div className="chart-container">
+                                    {isHistoryLoading ? <div className="flex items-center justify-center h-full text-gray-500">Loading historical data...</div> : (selectedStation && (chartHistory[selectedStation.id]?.length > 0) ? <canvas ref={windCanvasRef}></canvas> : <div className="flex items-center justify-center h-full text-gray-500">No data available for this station.</div>)}
+                                </div>
+                            </div>
+
+                             {/* Card 3: About The Data */}
+                            <div className="bg-white p-6 rounded-xl shadow-lg">
+                                <h3 className="text-lg font-semibold text-gray-700 mb-4">About The Data</h3>
+                                <ul className="space-y-2 text-sm text-gray-600">
+                                    <li>
+                                        <p>This application displays real-time wind data sourced directly from the National Environment Agency (NEA) via data.gov.sg (v2 API).</p>
+                                    </li>
+                                    <li>
+                                        <p><strong>Wind Speed and Direction:</strong> The data shown is the 10-minute average (speed and direction) collected by the sensor.</p>
+                                    </li>
+                                    <li>
+                                        <p><strong>Update Frequency:</strong> The data is typically published to the API in batches every 5 minutes.</p>
+                                    </li>
+                                </ul>
+                                <div className="mt-4 pt-4 border-t">
+                                     <a href="https://data.gov.sg/collections/1459/view" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
+                                         For reference, please refer to: https://data.gov.sg/collections/1459/view
+                                     </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
 </body>
 </html>
