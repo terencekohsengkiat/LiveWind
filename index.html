@@ -3,18 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SG Live Wind Data (v2 API)</title>
+    <title>Live Wind Data</title>
     
+    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- LeafletJS for the interactive map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     
+    <!-- Chart.js for data visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <!-- Chart.js Zoom Plugin for selection -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.min.js"></script>
 
 
+    <!-- React and Babel for running the app -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -52,10 +57,7 @@
         const { useState, useEffect, useRef } = React;
 
         // --- Constants ---
-        // V2 API CONFIGURATION
-        const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
-        const API_BASE = 'https://api-open.data.gov.sg/v2/real-time/api/';
-        
+        const NEA_API_BASE = 'https://api.data.gov.sg/v1/environment/';
         const CONVERSIONS = {
             'knots': 1,
             'm/s': 0.514444,
@@ -71,12 +73,12 @@
 
         // --- Helper Functions ---
         const convertSpeed = (speed_knots, unit) => {
-            if (speed_knots === undefined || speed_knots === null) return 0;
+            if (speed_knots === undefined) return 0;
             return speed_knots * CONVERSIONS[unit];
         };
         
         const degreesToCardinal = (deg) => {
-            if (deg === undefined || deg === null) return '';
+            if (deg === undefined) return '';
             const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
             const index = Math.round(deg / 22.5) % 16;
             return directions[index];
@@ -135,9 +137,8 @@
 
                 let yNorth;
                 const ticks = yAxis.getTicks();
-                // Find a tick that represents 0, 360, 720 etc.
                 const zeroTick = ticks.find(t => (t.value % 360) === 0);
-                
+               
                 if(zeroTick) {
                     yNorth = yAxis.getPixelForTick(zeroTick.index);
                 } else {
@@ -150,7 +151,6 @@
                 ctx.lineTo(chartArea.right, yNorth);
                 ctx.lineWidth = 2;
                 ctx.strokeStyle = 'red';
-                ctx.setLineDash([5, 5]);
                 ctx.stroke();
                 ctx.restore();
             }
@@ -273,7 +273,7 @@
             const windCanvasRef = useRef(null);
             const markerLayerRef = useRef(null);
 
-            // --- V2 API FETCHING LOGIC ---
+            // Fetch initial live data, then historical data
             useEffect(() => {
                 const fetchAllData = async (isInitialLoad) => {
                     if (isInitialLoad) {
@@ -284,119 +284,136 @@
                     
                     try {
                         const now = new Date();
-                        // For v2, we query by date to get history for the day
-                        const dateStr = now.toISOString().split('T')[0]; 
+                        const cacheBuster = `?_=${now.getTime()}`;
+                        const dateStr = now.toISOString().split('T')[0];
                         const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
                         const yesterdayStr = sixHoursAgo.toISOString().split('T')[0];
+
+                        const dataTypes = ['wind-speed', 'wind-direction', 'air-temperature', 'relative-humidity'];
+                        const livePromises = dataTypes.map(type => fetch(`${NEA_API_BASE}${type}${cacheBuster}`));
                         
-                        const endpoints = {
-                            speed: 'wind-speed',
-                            deg: 'wind-direction',
-                            temp: 'air-temperature',
-                            humidity: 'relative-humidity'
+                        const responses = await Promise.all(livePromises);
+                        if (responses.some(res => !res.ok)) throw new Error('Could not load live data.');
+                        const liveJsonData = await Promise.all(responses.map(res => res.json()));
+                        
+                        const liveData = dataTypes.reduce((acc, type, i) => {
+                            acc[type] = liveJsonData[i];
+                            return acc;
+                        }, {});
+
+                        const metadataStations = liveData['wind-direction'].metadata.stations;
+                        const liveTimestamp = new Date(liveData['wind-speed'].items[0].timestamp);
+                        const liveReadings = {
+                            speed: liveData['wind-speed'].items[0].readings,
+                            deg: liveData['wind-direction'].items[0].readings,
+                            temp: liveData['air-temperature'].items[0].readings,
+                            humidity: liveData['relative-humidity'].items[0].readings
                         };
 
-                        const headers = { "x-api-key": API_KEY };
+                        const activeStationIds = new Set(liveReadings.speed.map(r => r.station_id));
+                        const activeStations = metadataStations.filter(s => activeStationIds.has(s.id));
                         
-                        // We need to fetch data for Today. If it's early morning, we might need yesterday's data too.
-                        const datesToFetch = [dateStr];
-                        if (dateStr !== yesterdayStr) datesToFetch.push(yesterdayStr);
-
-                        const fetchMetric = async (metric, type) => {
-                             // Fetch for all required dates
-                             const requests = datesToFetch.map(d => 
-                                 fetch(`${API_BASE}${type}?date=${d}`, { headers }).then(res => {
-                                     if (!res.ok) return { code: -1, data: null }; // Soft fail for temp/humidity if not existing
-                                     return res.json();
-                                 })
-                             );
-                             
-                             const results = await Promise.all(requests);
-                             // Merge results from multiple days
-                             let mergedReadings = [];
-                             let stationsData = [];
-                             
-                             results.forEach(res => {
-                                 if (res.code === 0 && res.data) {
-                                     if(res.data.stations) stationsData = res.data.stations; // Keep latest stations
-                                     if(res.data.readings) mergedReadings = [...mergedReadings, ...res.data.readings];
-                                 }
-                             });
-                             
-                             return { stations: stationsData, readings: mergedReadings };
-                        };
-
-                        const [speedData, degData, tempData, humidData] = await Promise.all([
-                            fetchMetric('speed', endpoints.speed),
-                            fetchMetric('deg', endpoints.deg),
-                            fetchMetric('temp', endpoints.temp),
-                            fetchMetric('humidity', endpoints.humidity)
-                        ]);
-
-                        if (speedData.stations.length === 0) throw new Error("Unable to fetch Wind Speed data from V2 API.");
-
-                        // --- DATA PARSING & STITCHING (The heavy lifting) ---
-                        
-                        // 1. Process Stations
-                        // V2 stations array: [{ id, name, location: { latitude, longitude } }]
                         if (isInitialLoad) {
-                            setAllStations(speedData.stations);
-                            if (speedData.stations.length > 0) {
-                                const defaultStation = speedData.stations.find(s => s.name === 'East Coast Parkway') || speedData.stations[0];
+                            setAllStations(activeStations);
+                             if (activeStations.length > 0) {
+                                const defaultStation = activeStations.find(s => s.name === 'East Coast Parkway') || activeStations[0];
                                 setSelectedStation(defaultStation);
                             }
                         }
 
-                        // 2. Stitch readings by Time and Station
-                        // Format: { StationID: [ { time, speed, deg, temp, humidity } ] }
-                        const newHistory = {};
+                        const latestDataPoint = {};
+                        activeStations.forEach(station => {
+                             const speedReading = liveReadings.speed.find(r => r.station_id === station.id);
+                             const dirReading = liveReadings.deg.find(r => r.station_id === station.id);
+                             const tempReading = liveReadings.temp.find(r => r.station_id === station.id);
+                             const humidReading = liveReadings.humidity.find(r => r.station_id === station.id);
+                             if(speedReading && dirReading) {
+                                latestDataPoint[station.id] = {
+                                     time: liveTimestamp,
+                                     speed: speedReading.value,
+                                     deg: dirReading.value,
+                                     temp: tempReading?.value,
+                                     humidity: humidReading?.value
+                                 };
+                             }
+                        });
                         
-                        // Helper to process a specific metric type into the history object
-                        const processMetricReadings = (metricData, keyName) => {
-                            if (!metricData.readings) return;
-                            metricData.readings.forEach(batch => {
-                                const timestamp = new Date(batch.timestamp);
-                                batch.data.forEach(record => {
-                                    const stId = record.stationId;
-                                    if (!newHistory[stId]) newHistory[stId] = {};
-                                    // Use timestamp string as temporary key for stitching
-                                    const timeKey = timestamp.toISOString();
-                                    if (!newHistory[stId][timeKey]) {
-                                        newHistory[stId][timeKey] = { time: timestamp };
+                        setChartHistory(prev => {
+                            const newHist = { ...prev };
+                            Object.keys(latestDataPoint).forEach(id => {
+                                if (!newHist[id] || newHist[id].length === 0) {
+                                    newHist[id] = [latestDataPoint[id]];
+                                } else {
+                                    const lastTime = newHist[id][newHist[id].length - 1].time.getTime();
+                                    if (latestDataPoint[id].time.getTime() > lastTime) {
+                                        newHist[id] = [...newHist[id], latestDataPoint[id]];
                                     }
-                                    newHistory[stId][timeKey][keyName] = record.value;
-                                });
+                                }
                             });
-                        };
-
-                        processMetricReadings(speedData, 'speed');
-                        processMetricReadings(degData, 'deg');
-                        processMetricReadings(tempData, 'temp');
-                        processMetricReadings(humidData, 'humidity');
-
-                        // Convert object map to sorted array
-                        const finalChartData = {};
-                        Object.keys(newHistory).forEach(stId => {
-                            const readingsArray = Object.values(newHistory[stId]);
-                            readingsArray.sort((a, b) => a.time - b.time);
-                            // Filter for last 6 hours or valid data range
-                            finalChartData[stId] = readingsArray.filter(r => r.time >= sixHoursAgo);
+                            return newHist;
                         });
 
-                        setChartHistory(finalChartData);
                         setIsLoading(false);
+                        
+                        if (!isInitialLoad) return;
+
+                        const datesToFetch = [dateStr];
+                        if (dateStr !== yesterdayStr) datesToFetch.push(yesterdayStr);
+                        
+                        const histPromises = dataTypes.flatMap(type => datesToFetch.map(date => fetch(`${NEA_API_BASE}${type}?date=${date}`)));
+                        const histResponses = await Promise.all(histPromises);
+                        if (histResponses.some(res => !res.ok)) throw new Error('Could not load historical data.');
+                        const histJsonData = await Promise.all(histResponses.map(res => res.json()));
+                        
+                        const numDates = datesToFetch.length;
+                        const readingsByType = {
+                            speed: histJsonData.slice(0, numDates).flatMap(d => d.items),
+                            deg: histJsonData.slice(numDates, numDates*2).flatMap(d => d.items),
+                            temp: histJsonData.slice(numDates*2, numDates*3).flatMap(d => d.items),
+                            humidity: histJsonData.slice(numDates*3).flatMap(d => d.items)
+                        };
+
+                        const readingsByTime = {};
+                        Object.keys(readingsByType).forEach(type => {
+                            readingsByType[type].forEach(item => {
+                                item.readings.forEach(r => {
+                                    if (!readingsByTime[item.timestamp]) readingsByTime[item.timestamp] = {};
+                                    if (!readingsByTime[item.timestamp][r.station_id]) readingsByTime[item.timestamp][r.station_id] = {};
+                                    readingsByTime[item.timestamp][r.station_id][type] = r.value;
+                                });
+                            });
+                        });
+                        
+                        const fullHistory = {};
+                        activeStations.forEach(s => fullHistory[s.id] = []);
+                        Object.keys(readingsByTime).forEach(timestamp => {
+                            Object.keys(readingsByTime[timestamp]).forEach(stationId => {
+                                if (fullHistory[stationId]) {
+                                    fullHistory[stationId].push({ time: new Date(timestamp), ...readingsByTime[timestamp][stationId] });
+                                }
+                            });
+                        });
+
+                        Object.keys(fullHistory).forEach(stationId => {
+                            fullHistory[stationId].sort((a, b) => a.time - b.time);
+                            fullHistory[stationId] = fullHistory[stationId].filter(d => d.time >= sixHoursAgo);
+                             if (latestDataPoint[stationId] && latestDataPoint[stationId].time > (fullHistory[stationId][fullHistory[stationId].length - 1]?.time || 0)) {
+                                fullHistory[stationId].push(latestDataPoint[stationId]);
+                            }
+                        });
+                        
+                        setChartHistory(fullHistory);
                         setIsHistoryLoading(false);
 
                     } catch (e) {
-                        console.error(e);
-                        setError(e.message || "Error fetching data");
+                        setError(e.message);
                         setIsLoading(false);
                         setIsHistoryLoading(false);
                     }
                 };
                 
                 fetchAllData(true);
-                const intervalId = setInterval(() => fetchAllData(false), 60000); // Update every minute
+                const intervalId = setInterval(() => fetchAllData(false), 60000);
                 return () => clearInterval(intervalId);
             }, []);
             
@@ -435,8 +452,7 @@
                 const canvas = windCanvasRef.current;
                 if (!canvas) return;
                 
-                const currentHistory = selectedStation ? (chartHistory[selectedStation.id] || []) : [];
-                
+                const currentHistory = chartHistory[selectedStation?.id] || [];
                 if (windChartRef.current) {
                     windChartRef.current.destroy();
                     windChartRef.current = null;
@@ -470,7 +486,6 @@
                             label: 'Wind Direction (°)',
                             color: 'red',
                             data: currentHistory.map(d => {
-                                if (d.deg === undefined) return null;
                                 const diff = d.deg - directionCenter;
                                 if (diff > 180) return d.deg - 360;
                                 if (diff < -180) return d.deg + 360;
@@ -546,26 +561,26 @@
                                     mode: 'index', 
                                     intersect: false,
                                      callbacks: {
-                                         title: (tooltipItems) => {
-                                             const date = new Date(tooltipItems[0].parsed.x);
-                                             return `${date.getHours().toString().padStart(2, '0')}${date.getMinutes().toString().padStart(2, '0')}h`;
-                                         },
-                                         label: function(context) {
-                                             const metricKey = selectedMetrics[context.datasetIndex];
-                                             const originalValue = currentHistory[context.dataIndex][metricKey];
-                                             let unit = '';
-                                             if (metricKey === 'speed') unit = units;
-                                             if (metricKey === 'deg') unit = '°';
-                                             if (metricKey === 'temp') unit = '°C';
-                                             if (metricKey === 'humidity') unit = '%';
+                                        title: (tooltipItems) => {
+                                            const date = new Date(tooltipItems[0].parsed.x);
+                                            return `${date.getHours().toString().padStart(2, '0')}${date.getMinutes().toString().padStart(2, '0')}h`;
+                                        },
+                                        label: function(context) {
+                                            const metricKey = selectedMetrics[context.datasetIndex];
+                                            const originalValue = currentHistory[context.dataIndex][metricKey];
+                                            let unit = '';
+                                            if (metricKey === 'speed') unit = units;
+                                            if (metricKey === 'deg') unit = '°';
+                                            if (metricKey === 'temp') unit = '°C';
+                                            if (metricKey === 'humidity') unit = '%';
 
-                                             let valueToShow = context.parsed.y;
-                                             if (metricKey === 'deg') valueToShow = originalValue;
-                                             if (metricKey === 'humidity') valueToShow = originalValue;
-                                             
-                                             return `${context.dataset.label}: ${valueToShow !== undefined && valueToShow !== null ? valueToShow.toFixed(metricKey === 'speed' ? 2 : 0) : 'N/A'} ${unit}`;
-                                         }
-                                     }
+                                            let valueToShow = context.parsed.y;
+                                            if (metricKey === 'deg') valueToShow = originalValue;
+                                            if (metricKey === 'humidity') valueToShow = originalValue;
+                                            
+                                            return `${context.dataset.label}: ${valueToShow?.toFixed(metricKey === 'speed' ? 2 : 0)} ${unit}`;
+                                        }
+                                    }
                                 },
                                 zoom: {
                                     pan: { enabled: true, mode: 'x' },
@@ -607,7 +622,7 @@
                 });
             };
 
-            const currentHistory = selectedStation ? (chartHistory[selectedStation.id] || []) : [];
+            const currentHistory = selectedStation ? chartHistory[selectedStation.id] : [];
             const currentReading = currentHistory && currentHistory.length > 0 ? currentHistory[currentHistory.length - 1] : {};
 
             return (
@@ -637,7 +652,7 @@
                         <header className="mb-6 flex justify-between items-center">
                             <div>
                                 <h1 className="text-2xl font-bold text-gray-800">Live Wind Data</h1>
-                                <p className="text-lg text-gray-600 mt-1">from Data.gov.sg (v2 API)</p>
+                                <p className="text-lg text-gray-600 mt-1">from NEA stations across Singapore</p>
                             </div>
                             <button onClick={() => setStationModalOpen(true)} className="bg-white px-4 py-2 rounded-lg shadow hover:bg-gray-200 transition text-sm text-gray-700 font-semibold">Select Station</button>
                         </header>
@@ -653,11 +668,11 @@
                             <div className="bg-white p-6 rounded-xl shadow-lg">
                                 <div className="mb-4">
                                     <h2 className="text-2xl font-semibold text-gray-700 truncate pr-2">
-                                        <span className="text-blue-600">{selectedStation?.name || 'Loading...'}</span>
+                                        <span className="text-blue-600">{selectedStation?.name || '...'}</span>
                                     </h2>
                                     <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
                                         <div className="w-3 h-3 bg-red-500 rounded-full live-dot"></div>
-                                        <span>{currentReading.time ? formatTimestamp(currentReading.time) : 'Connecting...'}</span>
+                                        <span>{formatTimestamp(currentReading.time)}</span>
                                     </div>
                                 </div>
                                 {error && <div className="text-red-600 bg-red-100 p-3 rounded-lg my-2">{error}</div>}
@@ -668,14 +683,14 @@
                                              <div className="flex flex-col items-center justify-center">
                                                 <div className="text-center mb-2">
                                                     <div className="text-xs text-gray-500">Direction</div>
-                                                    <div className="text-xl font-bold text-gray-800">{currentReading.deg !== undefined ? currentReading.deg + '° ' + degreesToCardinal(currentReading.deg) : '-'}</div>
+                                                    <div className="text-xl font-bold text-gray-800">{currentReading.deg}° {degreesToCardinal(currentReading.deg)}</div>
                                                 </div>
-                                                <DirectionArrow direction={currentReading.deg || 0} speedKnots={currentReading.speed} />
+                                                <DirectionArrow direction={currentReading.deg} speedKnots={currentReading.speed} />
                                             </div>
                                             <div className="flex flex-col items-center justify-center">
                                                 <div className="text-center mb-2">
                                                     <div className="text-xs text-gray-500">Speed</div>
-                                                    <div className="text-xl font-bold text-gray-800">{currentReading.speed !== undefined ? convertSpeed(currentReading.speed, units).toFixed(1) : '-'} <span className="text-sm font-normal">{units}</span></div>
+                                                    <div className="text-xl font-bold text-gray-800">{convertSpeed(currentReading.speed, units).toFixed(1)} <span className="text-sm font-normal">{units}</span></div>
                                                 </div>
                                                 <Speedometer speedKnots={currentReading.speed} />
                                             </div>
@@ -691,12 +706,12 @@
                                         <div className="flex items-center gap-6 mt-4">
                                             <div className="text-center">
                                                  <svg className="w-10 h-10 mx-auto text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16V6a1 1 0 00-1-1H9a1 1 0 00-1 1v10a5 5 0 0010 0v-2.5a.5.5 0 00-.5-.5h-1a.5.5 0 00-.5.5V16a3 3 0 01-6 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 4a1 1 0 011-1h2a1 1 0 011 1v1a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path></svg>
-                                                <div className="text-2xl font-bold mt-2">{currentReading.temp !== undefined ? currentReading.temp.toFixed(1) + '°C' : '-'}</div>
+                                                <div className="text-2xl font-bold mt-2">{currentReading.temp?.toFixed(1) || 'N/A'}°C</div>
                                                 <div className="text-xs text-gray-500">Temperature</div>
                                             </div>
                                             <div className="text-center">
                                                 <svg className="w-10 h-10 mx-auto text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.8M9 19l3 3m0 0l3-3m-3 3V10"></path></svg>
-                                                <div className="text-2xl font-bold mt-2">{currentReading.humidity !== undefined ? currentReading.humidity.toFixed(0) + '%' : '-'}</div>
+                                                <div className="text-2xl font-bold mt-2">{currentReading.humidity?.toFixed(0) || 'N/A'}%</div>
                                                 <div className="text-xs text-gray-500">Humidity</div>
                                             </div>
                                         </div>
@@ -722,19 +737,19 @@
                                 <h3 className="text-lg font-semibold text-gray-700 mb-4">About The Data</h3>
                                 <ul className="space-y-2 text-sm text-gray-600">
                                     <li>
-                                        <p>This application displays real-time wind data sourced directly from the National Environment Agency (NEA) via data.gov.sg (v2 API).</p>
+                                        <p>This application displays real-time wind data sourced directly from the National Environment Agency (NEA) via data.gov.sg.</p>
                                     </li>
                                     <li>
                                         <p><strong>Wind Speed and Direction:</strong> The data shown is the 10-minute average (speed and direction) collected by the sensor.</p>
                                     </li>
                                     <li>
-                                        <p><strong>Update Frequency:</strong> The data is typically published to the API in batches every 5 minutes.</p>
+                                        <p><strong>Update Frequency:</strong> The data is recorded by the NEA every minute and is typically published to the API in batches every five minutes.</p>
                                     </li>
                                 </ul>
                                 <div className="mt-4 pt-4 border-t">
                                      <a href="https://data.gov.sg/collections/1459/view" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-                                         For reference, please refer to: https://data.gov.sg/collections/1459/view
-                                     </a>
+                                        For reference, please refer to: https://data.gov.sg/collections/1459/view
+                                    </a>
                                 </div>
                             </div>
                         </div>
@@ -749,3 +764,4 @@
     </script>
 </body>
 </html>
+
