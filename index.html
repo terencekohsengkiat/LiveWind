@@ -60,7 +60,6 @@
             if (!date) return '';
             return `${date.getDate()}/${date.getMonth()+1} @ ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
         };
-        // Small delay helper to prevent Rate Limits
         const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
         // --- Chart Plugins ---
@@ -160,11 +159,9 @@
             const [allStations, setAllStations] = useState([]);
             const [selectedStation, setSelectedStation] = useState(null);
             
-            // Separate Data Streams
             const [liveDataMap, setLiveDataMap] = useState({});
             const [chartHistory, setChartHistory] = useState({});
             
-            // UI State
             const [units, setUnits] = useState('knots');
             const [historyStatus, setHistoryStatus] = useState(null);
             const [isZoomed, setIsZoomed] = useState(false);
@@ -176,12 +173,10 @@
             const windChartRef = useRef(null);
             const windCanvasRef = useRef(null);
 
-            // 1. Live Data (Immediate)
             useEffect(() => {
                 const fetchLive = async () => {
                     try {
                         const headers = { "x-api-key": API_KEY };
-                        // Fetch latest snapshots only (no date param)
                         const [speed, deg, temp, humid] = await Promise.all([
                             fetch(`${API_BASE}wind-speed`, { headers }).then(r => r.json()),
                             fetch(`${API_BASE}wind-direction`, { headers }).then(r => r.json()),
@@ -215,8 +210,6 @@
                             });
                             
                             setLiveDataMap(combined);
-                            
-                            // Start history fetch after live data is ready
                             fetchHistoryRobust(speed.data.stations);
                         }
                     } catch (e) {
@@ -229,14 +222,12 @@
                 return () => clearInterval(interval);
             }, []);
 
-            // 2. Robust History Fetch (Throttled + Independent)
             const fetchHistoryRobust = async (stations) => {
                 setHistoryStatus("Loading...");
                 const now = new Date();
                 const dateStr = now.toISOString().split('T')[0];
                 const headers = { "x-api-key": API_KEY };
 
-                // A fetcher that sleeps between pages to avoid 429 errors
                 const fetchWithThrottle = async (endpoint) => {
                     let readings = [];
                     let url = `${API_BASE}${endpoint}?date=${dateStr}`;
@@ -246,7 +237,6 @@
                         try {
                             const res = await fetch(url, { headers });
                             if (res.status === 429) {
-                                // Hit rate limit? Wait 1s and retry once
                                 await sleep(1000);
                                 continue;
                             }
@@ -258,20 +248,18 @@
                             if(json.data.paginationToken) {
                                 url = `${API_BASE}${endpoint}?date=${dateStr}&paginationToken=${encodeURIComponent(json.data.paginationToken)}`;
                                 page++;
-                                // THROTTLE: Sleep 300ms between pages
                                 await sleep(300);
                             } else {
                                 url = null;
                             }
                         } catch (err) {
                             console.warn(`Error fetching ${endpoint} page ${page}`, err);
-                            break; // Stop fetching this metric, but return what we have
+                            break;
                         }
                     }
                     return readings;
                 };
 
-                // Fetch metrics independently (if temp fails, wind still works)
                 const [speedRaw, degRaw, tempRaw, humidRaw] = await Promise.all([
                     fetchWithThrottle('wind-speed'),
                     fetchWithThrottle('wind-direction'),
@@ -279,7 +267,6 @@
                     fetchWithThrottle('relative-humidity')
                 ]);
 
-                // Stitch Logic
                 const timeMap = {};
                 const process = (raw, key) => {
                     if(!raw) return;
@@ -334,8 +321,6 @@
                 setIsZoomed(false);
 
                 const data = chartHistory[selectedStation.id] || [];
-                // If we have live data but history failed/is loading, we can at least show the live point? 
-                // For now, let's just wait for history.
                 
                 const metricConfigs = {
                     speed: {
@@ -398,7 +383,22 @@
                                 pan: { enabled: true, mode: 'x' },
                                 zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x', onZoomComplete: () => setIsZoomed(true) }
                             },
-                            tooltip: { callbacks: { title: (items) => { const d = new Date(items[0].parsed.x); return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; } } }
+                            tooltip: { 
+                                callbacks: { 
+                                    title: (items) => { const d = new Date(items[0].parsed.x); return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; },
+                                    label: (context) => {
+                                        let label = context.dataset.label || '';
+                                        if (label) label += ': ';
+                                        let value = context.parsed.y;
+                                        // FIX: Force normalization of degrees in tooltip (e.g., 383 -> 23)
+                                        if (context.dataset.yAxisID === 'y1' && context.dataset.label.includes('Direction')) {
+                                             const normalized = ((value % 360) + 360) % 360;
+                                             return label + Math.round(normalized) + '°';
+                                        }
+                                        return label + value;
+                                    }
+                                } 
+                            }
                         }
                     },
                     plugins: [verticalLinePlugin, northLinePlugin]
@@ -524,7 +524,7 @@
                                 </ul>
                                 <div className="mt-4 pt-4 border-t">
                                      <a href="https://data.gov.sg/collections/1459/view" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-                                         Reference: https://data.gov.sg/collections/1459/view
+                                          Reference: https://data.gov.sg/collections/1459/view
                                      </a>
                                 </div>
                             </div>
