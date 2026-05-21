@@ -1,541 +1,1098 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Wind Data (Robust)</title>
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0b0c" />
+  <title>Live Wind · Singapore</title>
 
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- No-flash theme bootstrap -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('lw-theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.classList.toggle('dark', t === 'dark');
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
+  </script>
 
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; }
-        #map { height: 300px; width: 100%; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
-        .chart-container { position: relative; height: 350px; }
-        .leaflet-popup-content-wrapper { background: #fff; color: #333; }
-        .station-list { max-height: 200px; overflow-y: auto; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
-        .live-dot { animation: pulse 1.5s infinite; }
-        input[type="checkbox"]:disabled + label { cursor: not-allowed; opacity: 0.5; }
-    </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.min.js"></script>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --font-body: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
+      --font-display: 'Space Grotesk', 'Inter', sans-serif;
+
+      --bg: #f3f3f1;
+      --bg-glow: #fdfdfc;
+      --surface: rgba(255,255,255,.72);
+      --surface-solid: #fbfbfa;
+      --border: rgba(17,18,20,.11);
+      --border-strong: rgba(17,18,20,.18);
+      --hairline: rgba(17,18,20,.07);
+      --track: rgba(17,18,20,.06);
+      --shadow: 0 1px 2px rgba(17,18,20,.04), 0 10px 30px -20px rgba(17,18,20,.30);
+      --text-strong: #161719;
+      --text: #3d4046;
+      --text-muted: #8a8c92;
+      --accent: #de5621;
+      --accent-soft: rgba(222,86,33,.11);
+    }
+    html.dark {
+      --bg: #0b0b0c;
+      --bg-glow: #151517;
+      --surface: rgba(23,23,25,.66);
+      --surface-solid: #161618;
+      --border: rgba(255,255,255,.09);
+      --border-strong: rgba(255,255,255,.16);
+      --hairline: rgba(255,255,255,.06);
+      --track: rgba(255,255,255,.06);
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px -24px rgba(0,0,0,.8);
+      --text-strong: #f2f2f1;
+      --text: #b7b8bc;
+      --text-muted: #7b7c82;
+      --accent: #f26a2e;
+      --accent-soft: rgba(242,106,46,.13);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: var(--font-body);
+      color: var(--text);
+      background: radial-gradient(120% 100% at 50% -8%, var(--bg-glow), var(--bg) 62%);
+      background-attachment: fixed;
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      transition: background .5s ease, color .35s ease;
+    }
+    button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+    a { color: var(--accent); text-decoration: none; }
+    h1, h2, h3 { margin: 0; }
+    .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 20px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    .wind-field { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+    /* ---- shell ---- */
+    .app { position: relative; z-index: 10; max-width: 1240px; margin: 0 auto; padding: 30px 24px 64px; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 26px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 13px; }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+      background: var(--accent); color: #fff;
+    }
+    .brand-mark svg { width: 20px; height: 20px; }
+    .brand-title {
+      font-family: var(--font-display); font-weight: 600; font-size: 1.04rem;
+      letter-spacing: .2em; color: var(--text-strong); line-height: 1;
+    }
+    .brand-sub { font-size: .72rem; color: var(--text-muted); margin-top: 5px; letter-spacing: .02em; }
+    .live-pill {
+      display: inline-flex; align-items: center; gap: 6px; margin-left: 9px;
+      font-size: .58rem; font-weight: 600; letter-spacing: .18em; color: var(--text-muted);
+      vertical-align: middle;
+    }
+    .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+      70% { box-shadow: 0 0 0 7px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+    .topbar-actions { display: flex; align-items: center; gap: 9px; }
+    .pill-btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 14px; border-radius: 11px; font-weight: 500; font-size: .84rem;
+      color: var(--text-strong);
+      background: var(--surface); border: 1px solid var(--border);
+      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+      transition: border-color .2s ease, background .3s ease;
+    }
+    .pill-btn:hover { border-color: var(--border-strong); }
+    .pill-btn svg { width: 16px; height: 16px; color: var(--text-muted); }
+    .pill-btn .station-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .icon-btn { width: 40px; height: 40px; padding: 0; justify-content: center; }
+
+    /* ---- panels ---- */
+    .panel {
+      position: relative;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      -webkit-backdrop-filter: blur(10px) saturate(115%);
+      backdrop-filter: blur(10px) saturate(115%);
+      transition: border-color .25s ease, background .4s ease;
+    }
+    .panel:hover { border-color: var(--border-strong); }
+    .tile-label {
+      font-size: .66rem; font-weight: 600; letter-spacing: .15em; text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    /* ---- bento ---- */
+    .bento { display: grid; gap: 16px; grid-template-columns: repeat(12, 1fr); }
+    .cell-hero { grid-column: span 5; grid-row: span 2; }
+    .cell-speed { grid-column: span 7; }
+    .cell-conditions { grid-column: span 7; }
+    .cell-chart { grid-column: span 12; }
+    .cell-about { grid-column: span 12; }
+
+    /* ---- hero / wind direction ---- */
+    .cell-hero { display: flex; flex-direction: column; padding: 22px; }
+    .arrow-wrap { flex: 1; min-height: 248px; display: grid; place-items: center; margin: 8px 0 4px; }
+    .arrow-wrap canvas { display: block; }
+    .dir-readout { text-align: center; }
+    .dir-deg { font-family: var(--font-display); font-weight: 600; font-size: 2.3rem; color: var(--text-strong); line-height: 1; }
+    .dir-card { font-size: .85rem; color: var(--text-muted); margin-top: 6px; letter-spacing: .03em; }
+    .hero-foot {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: .78rem; color: var(--text-muted); margin-top: 16px;
+    }
+
+    /* ---- speed tile ---- */
+    .cell-speed { display: flex; flex-direction: column; padding: 22px; }
+    .tile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .speed-readout { display: flex; align-items: baseline; gap: 11px; margin: 14px 0 4px; }
+    .speed-num {
+      font-family: var(--font-display); font-weight: 600; line-height: .9;
+      font-size: clamp(3.4rem, 8.6vw, 5.8rem); color: var(--text-strong);
+      letter-spacing: -.02em;
+    }
+    .speed-unit { font-size: 1.05rem; font-weight: 500; color: var(--text-muted); }
+    .speed-verdict { font-size: .92rem; font-weight: 500; color: var(--text); margin-bottom: 22px; }
+
+    .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--track); }
+    .seg button {
+      padding: 6px 11px; border-radius: 8px; font-size: .77rem; font-weight: 500;
+      color: var(--text-muted); transition: color .2s ease, background .2s ease; white-space: nowrap;
+    }
+    .seg button.on { background: var(--surface-solid); color: var(--text-strong); }
+
+    .meter { margin-top: auto; }
+    .meter-track { position: relative; height: 6px; border-radius: 999px; background: var(--track); }
+    .meter-fill {
+      position: absolute; left: 0; top: 0; height: 100%; border-radius: 999px;
+      background: var(--accent); transition: width .6s cubic-bezier(.2,.7,.2,1);
+    }
+    .meter-thumb {
+      position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+      transform: translate(-50%,-50%); background: var(--surface-solid);
+      border: 3px solid var(--accent);
+      transition: left .6s cubic-bezier(.2,.7,.2,1);
+    }
+    .meter-scale { display: flex; justify-content: space-between; margin-top: 10px; font-size: .66rem; color: var(--text-muted); }
+
+    /* ---- conditions tile ---- */
+    .cell-conditions { display: flex; flex-direction: column; padding: 22px; }
+    .cond-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; flex: 1; }
+    .cond {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+      padding: 22px 12px; border-radius: 13px; background: var(--track);
+    }
+    .cond svg { width: 26px; height: 26px; color: var(--text-muted); }
+    .cond-val { font-family: var(--font-display); font-weight: 600; font-size: 2rem; color: var(--text-strong); }
+    .cond-name { font-size: .72rem; color: var(--text-muted); letter-spacing: .04em; }
+
+    /* ---- sailing banner ---- */
+    .sail-banner {
+      margin-bottom: 16px; padding: 14px 20px; border-radius: 13px;
+      display: flex; align-items: center; justify-content: center; gap: 9px;
+      font-size: .95rem; color: var(--text-strong);
+      background: var(--accent-soft);
+      border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+      animation: fade .5s ease both;
+    }
+    .sail-banner b { color: var(--accent); font-weight: 600; }
+
+    /* ---- chart tile ---- */
+    .cell-chart { padding: 22px; }
+    .chart-title { font-family: var(--font-display); font-weight: 600; font-size: 1.02rem; color: var(--text-strong); }
+    .chart-status { margin-left: 8px; font-size: .73rem; color: var(--accent); font-weight: 500; }
+    .chart-controls { display: flex; align-items: center; gap: 7px; }
+    .mini-btn {
+      min-width: 30px; height: 30px; padding: 0 7px; border-radius: 8px; display: grid; place-items: center;
+      background: var(--track); color: var(--text-muted); font-size: .78rem; transition: color .2s ease;
+    }
+    .mini-btn:hover { color: var(--text-strong); }
+    .mini-btn.text { padding: 0 11px; font-weight: 500; }
+    .reset-zoom {
+      padding: 7px 12px; border-radius: 8px; font-size: .76rem; font-weight: 500;
+      color: #fff; background: var(--accent);
+    }
+    .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 15px 0 16px; }
+    .chips-label { font-size: .76rem; color: var(--text-muted); margin-right: 4px; }
+    .chip {
+      padding: 6px 12px; border-radius: 999px; font-size: .78rem; font-weight: 500;
+      color: var(--text-muted); background: var(--track);
+      border: 1px solid transparent; transition: all .2s ease;
+    }
+    .chip:hover:not(:disabled) { color: var(--text-strong); }
+    .chip.on { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+    .chip:disabled { opacity: .38; cursor: not-allowed; }
+    .chart-box { position: relative; height: 336px; }
+
+    /* ---- about tile ---- */
+    .cell-about { padding: 22px; }
+    .about-title { font-family: var(--font-display); font-weight: 600; font-size: 1rem; color: var(--text-strong); margin-bottom: 13px; }
+    .about-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .about-item { font-size: .85rem; line-height: 1.55; }
+    .about-item b { color: var(--text-strong); font-weight: 600; }
+    .about-link { display: inline-block; margin-top: 14px; font-size: .82rem; font-weight: 500; }
+
+    .foot { text-align: center; margin-top: 28px; font-size: .74rem; color: var(--text-muted); letter-spacing: .02em; }
+
+    /* ---- modal ---- */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+      padding: 20px; background: rgba(8,8,9,.5); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+      animation: fade .22s ease both;
+    }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    .modal { width: 100%; max-width: 580px; padding: 22px; background: var(--surface-solid); animation: rise .3s cubic-bezier(.2,.7,.2,1) both; }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .modal-head h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.12rem; color: var(--text-strong); }
+    .modal-close { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--track); color: var(--text); }
+    .modal-map { height: 290px; border-radius: 12px; overflow: hidden; }
+    .station-list { max-height: 210px; overflow-y: auto; margin-top: 13px; border-top: 1px solid var(--hairline); padding-top: 7px; }
+    .station-row { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: .88rem; transition: background .15s ease; }
+    .station-row:hover { background: var(--track); }
+    .station-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+    .leaflet-container { background: var(--bg-glow); font-family: var(--font-body); }
+    .leaflet-popup-content-wrapper, .leaflet-tooltip {
+      background: var(--surface-solid); color: var(--text-strong); border: 1px solid var(--border);
+    }
+
+    /* ---- animations ---- */
+    @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+    .rise { animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+
+    /* ---- responsive ---- */
+    @media (max-width: 1024px) {
+      .bento { grid-template-columns: repeat(6, 1fr); }
+      .cell-hero { grid-column: span 6; grid-row: auto; }
+      .cell-speed { grid-column: span 6; }
+      .cell-conditions { grid-column: span 6; }
+      .cell-chart, .cell-about { grid-column: span 6; }
+      .arrow-wrap { min-height: 300px; }
+    }
+    @media (max-width: 640px) {
+      .app { padding: 20px 14px 48px; }
+      .bento { grid-template-columns: 1fr; gap: 13px; }
+      .bento > * { grid-column: 1 / -1 !important; }
+      .brand-sub { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .live-dot { animation: none; }
+      .rise { animation-duration: .01ms; }
+    }
+  </style>
 </head>
 <body>
-    <div id="root"></div>
+  <div id="root"></div>
+  <noscript>This dashboard needs JavaScript enabled.</noscript>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
-        // --- Configuration ---
-        const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
-        const API_BASE = 'https://api-open.data.gov.sg/v2/real-time/api/';
-        const CONVERSIONS = { 'knots': 1, 'm/s': 0.514444, 'km/h': 1.852 };
-        const KNOT_THRESHOLDS = { SAIL: 15 };
-        const SPEED_COLORS = { LEVEL_1: '#ef4444', LEVEL_2: '#f59e0b', LEVEL_3: '#22c55e', LEVEL_4: '#3b82f6' };
+    /* ---------- configuration ---------- */
+    const API_KEY = "v2:43847eaac104333fa323d3310cf8ef01f27523477c46c12827b6b31426f1ede1:PShUptn2OuGsQx2UmTgemsHrBFGVbg7F";
+    const API_BASE = 'https://api-open.data.gov.sg/v2/real-time/api/';
+    const CONVERSIONS = { 'knots': 1, 'm/s': 0.514444, 'km/h': 1.852 };
+    const KNOT_THRESHOLDS = { SAIL: 15 };
+    const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const ACCENT_LINE = '#de5621';
 
-        // --- Helpers ---
-        const convertSpeed = (val, unit) => (val == null) ? 0 : val * CONVERSIONS[unit];
-        const degreesToCardinal = (deg) => {
-            if (deg == null) return '';
-            const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-            return dirs[Math.round(deg / 22.5) % 16];
+    const PALETTE = {
+      light: {
+        particle: '20,21,24', particleAlpha: 0.30,
+        dialRing: 'rgba(17,18,20,.13)', dialMuted: '#8a8c92',
+        dialText: '#3d4046', dialN: '#de5621', hub: '#fbfbfa',
+        chartGrid: 'rgba(17,18,20,.08)', chartTick: '#8a8c92',
+        tooltipBg: 'rgba(255,255,255,.97)', tooltipText: '#161719', tooltipBrd: 'rgba(17,18,20,.12)',
+        accent: '#de5621',
+        metric: { a: '#de5621', b: '#6b6e76' }
+      },
+      dark: {
+        particle: '212,213,218', particleAlpha: 0.32,
+        dialRing: 'rgba(255,255,255,.13)', dialMuted: '#7b7c82',
+        dialText: '#b7b8bc', dialN: '#f26a2e', hub: '#161618',
+        chartGrid: 'rgba(255,255,255,.07)', chartTick: '#7b7c82',
+        tooltipBg: 'rgba(20,20,22,.97)', tooltipText: '#f2f2f1', tooltipBrd: 'rgba(255,255,255,.12)',
+        accent: '#f26a2e',
+        metric: { a: '#f26a2e', b: '#9a9ca3' }
+      }
+    };
+
+    /* ---------- helpers ---------- */
+    const convertSpeed = (val, unit) => (val == null) ? 0 : val * CONVERSIONS[unit];
+    const degreesToCardinal = (deg) => {
+      if (deg == null) return '';
+      const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+      return dirs[Math.round(deg / 22.5) % 16];
+    };
+    const cardinalWord = (deg) => {
+      if (deg == null) return '';
+      const words = { N:'north', NNE:'north-northeast', NE:'northeast', ENE:'east-northeast',
+        E:'east', ESE:'east-southeast', SE:'southeast', SSE:'south-southeast',
+        S:'south', SSW:'south-southwest', SW:'southwest', WSW:'west-southwest',
+        W:'west', WNW:'west-northwest', NW:'northwest', NNW:'north-northwest' };
+      return words[degreesToCardinal(deg)] || '';
+    };
+    const windVerdict = (kt) => {
+      if (kt == null) return 'Awaiting live data';
+      if (kt < 10) return 'Difficult to Foil';
+      if (kt < 20) return 'Good for Foiling!';
+      if (kt < 30) return 'Better take a smaller wing!';
+      return "A rarity in Singapore! Don't brown your pants!";
+    };
+    const windColor = (kt) => {
+      if (kt == null) return '#8a8c92';
+      if (kt < 10) return '#ef4444';
+      if (kt < 20) return '#22c55e';
+      if (kt < 30) return '#3b82f6';
+      return '#a855f7';
+    };
+    const formatTimestamp = (date) => {
+      if (!date) return '';
+      return `${date.getDate()}/${date.getMonth()+1} @ ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+    };
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    if (window.Chart) Chart.defaults.font.family = "'Inter', sans-serif";
+
+    /* ---------- chart plugins ---------- */
+    const verticalLinePlugin = {
+      id: 'customVerticalLine',
+      beforeDatasetsDraw: chart => {
+        if (chart.tooltip && chart.tooltip._active && chart.tooltip._active.length) {
+          const ctx = chart.ctx;
+          const x = chart.tooltip._active[0].element.x;
+          const topY = chart.scales.y && chart.scales.y.top;
+          const bottomY = chart.scales.y && chart.scales.y.bottom;
+          if (topY !== undefined) {
+            ctx.save(); ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x, bottomY);
+            ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(140,140,146,.55)'; ctx.stroke(); ctx.restore();
+          }
+        }
+      }
+    };
+    const northLinePlugin = {
+      id: 'northLine',
+      afterDraw: chart => {
+        const yAxis = chart.scales.y1;
+        if (!yAxis || yAxis.id !== 'deg') return;
+        const ctx = chart.ctx;
+        const area = chart.chartArea;
+        if (!area) return;
+        yAxis.getTicks().forEach(t => {
+          if (t.value % 360 === 0) {
+            const y = yAxis.getPixelForTick(t.index);
+            if (y >= area.top && y <= area.bottom) {
+              ctx.save(); ctx.beginPath(); ctx.moveTo(area.left, y); ctx.lineTo(area.right, y);
+              ctx.lineWidth = 1; ctx.strokeStyle = ACCENT_LINE; ctx.setLineDash([5,5]); ctx.stroke(); ctx.restore();
+            }
+          }
+        });
+      }
+    };
+
+    /* ---------- theme hook ---------- */
+    const useTheme = () => {
+      const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
+      useEffect(() => {
+        const root = document.documentElement;
+        root.classList.toggle('dark', theme === 'dark');
+        root.dataset.theme = theme;
+        try { localStorage.setItem('lw-theme', theme); } catch (e) {}
+      }, [theme]);
+      return [theme, () => setTheme(t => t === 'dark' ? 'light' : 'dark')];
+    };
+
+    /* ---------- animated number ---------- */
+    const AnimatedNumber = ({ value, decimals = 1 }) => {
+      const [display, setDisplay] = useState(value || 0);
+      const fromRef = useRef(value || 0);
+      const rafRef = useRef(null);
+      useEffect(() => {
+        const from = fromRef.current;
+        const to = value || 0;
+        if (from === to) { setDisplay(to); return; }
+        const start = performance.now();
+        const dur = 650;
+        const tick = (now) => {
+          const p = Math.min((now - start) / dur, 1);
+          const e = 1 - Math.pow(1 - p, 3);
+          setDisplay(from + (to - from) * e);
+          if (p < 1) { rafRef.current = requestAnimationFrame(tick); }
+          else { fromRef.current = to; }
         };
-        const getSpeedColor = (s) => {
-            if (s == null) return '#9ca3af';
-            if (s < 10) return SPEED_COLORS.LEVEL_1;
-            if (s < 20) return SPEED_COLORS.LEVEL_2;
-            if (s < 30) return SPEED_COLORS.LEVEL_3;
-            return SPEED_COLORS.LEVEL_4;
-        };
-        const formatTimestamp = (date) => {
-            if (!date) return '';
-            return `${date.getDate()}/${date.getMonth()+1} @ ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
-        };
-        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafRef.current);
+      }, [value]);
+      return <span className="num">{Number(display).toFixed(decimals)}</span>;
+    };
 
-        // --- Chart Plugins ---
-        const verticalLinePlugin = {
-            id: 'customVerticalLine',
-            beforeDatasetsDraw: chart => {
-                if (chart.tooltip?._active?.length) {
-                    const ctx = chart.ctx;
-                    const x = chart.tooltip._active[0].element.x;
-                    const topY = chart.scales.y?.top;
-                    const bottomY = chart.scales.y?.bottom;
-                    if (topY !== undefined) {
-                        ctx.save(); ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x, bottomY);
-                        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)'; ctx.stroke(); ctx.restore();
-                    }
+    /* ---------- background wind-particle field ---------- */
+    const WindField = ({ speedKnots, directionDeg, theme }) => {
+      const canvasRef = useRef(null);
+      const dataRef = useRef({ speed: 0, dir: 0 });
+      const styleRef = useRef({ color: PALETTE.light.particle, alpha: PALETTE.light.particleAlpha });
+      dataRef.current.speed = speedKnots || 0;
+      dataRef.current.dir = (directionDeg == null) ? 0 : directionDeg;
+      useEffect(() => {
+        styleRef.current.color = PALETTE[theme].particle;
+        styleRef.current.alpha = PALETTE[theme].particleAlpha;
+      }, [theme]);
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        let raf, w = 0, h = 0, dpr = 1, particles = [];
+        const spawn = (fresh) => {
+          const max = 130 + Math.random() * 190;
+          return { x: Math.random() * w, y: Math.random() * h, max,
+                   life: fresh ? 0 : Math.random() * max, len: 0.4 + Math.random() * 1.0 };
+        };
+        const resize = () => {
+          dpr = Math.min(window.devicePixelRatio || 1, 2);
+          w = window.innerWidth; h = window.innerHeight;
+          canvas.width = w * dpr; canvas.height = h * dpr;
+          canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          const count = Math.round(Math.min(w, 1700) / (REDUCE_MOTION ? 13 : 6));
+          particles = [];
+          for (let i = 0; i < count; i++) particles.push(spawn(false));
+        };
+        resize();
+        let vx = 0, vy = 0;
+        const loop = () => {
+          const { speed, dir } = dataRef.current;
+          const rad = (dir + 180) * Math.PI / 180;
+          const mag = 0.2 + Math.min(speed, 35) * 0.08;
+          vx += (Math.sin(rad) * mag - vx) * 0.04;
+          vy += (-Math.cos(rad) * mag - vy) * 0.04;
+          ctx.clearRect(0, 0, w, h);
+          const color = styleRef.current.color;
+          const baseA = styleRef.current.alpha;
+          const ang = Math.atan2(vy, vx);
+          const vmag = Math.sqrt(vx * vx + vy * vy);
+          for (let i = 0; i < particles.length; i++) {
+            const p = particles[i];
+            p.x += vx; p.y += vy; p.life++;
+            const sl = 5 + vmag * 8 * p.len;
+            const fade = Math.sin(Math.min(p.life / p.max, 1) * Math.PI);
+            ctx.strokeStyle = 'rgba(' + color + ',' + (baseA * fade).toFixed(3) + ')';
+            ctx.lineWidth = 0.5 + p.len;
+            ctx.beginPath();
+            ctx.moveTo(p.x - Math.cos(ang) * sl, p.y - Math.sin(ang) * sl);
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+            if (p.life > p.max || p.x < -50 || p.x > w + 50 || p.y < -50 || p.y > h + 50) {
+              Object.assign(p, spawn(true));
+            }
+          }
+          raf = requestAnimationFrame(loop);
+        };
+        loop();
+        window.addEventListener('resize', resize);
+        return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); };
+      }, []);
+      return <canvas ref={canvasRef} className="wind-field" />;
+    };
+
+    /* ---------- 2D wind arrow on a compass dial ---------- */
+    const WindArrow = ({ direction, speedKnots, theme }) => {
+      const wrapRef = useRef(null);
+      const canvasRef = useRef(null);
+      const [size, setSize] = useState(280);
+      useEffect(() => {
+        const wrap = wrapRef.current;
+        if (!wrap) return;
+        const measure = () => {
+          const s = Math.min(wrap.clientWidth - 6, wrap.clientHeight - 6, 360);
+          setSize(Math.max(170, Math.round(s)));
+        };
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(wrap);
+        return () => ro.disconnect();
+      }, []);
+      useEffect(() => {
+        const cv = canvasRef.current;
+        if (!cv) return;
+        const pal = PALETTE[theme];
+        const arrowColor = windColor(speedKnots);
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        cv.width = size * dpr; cv.height = size * dpr;
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, size, size);
+        const S = size, cx = S / 2, cy = S / 2, R = S / 2 - S * 0.055;
+
+        /* rings */
+        ctx.strokeStyle = pal.dialRing; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, R - S * 0.05, 0, Math.PI * 2); ctx.stroke();
+
+        /* ticks */
+        for (let i = 0; i < 72; i++) {
+          const a = (i / 72) * Math.PI * 2 - Math.PI / 2;
+          const major = i % 9 === 0;
+          const len = major ? S * 0.05 : S * 0.026;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+          ctx.lineTo(cx + Math.cos(a) * (R - len), cy + Math.sin(a) * (R - len));
+          ctx.strokeStyle = major ? pal.dialMuted : pal.dialRing;
+          ctx.lineWidth = major ? 2 : 1;
+          ctx.stroke();
+        }
+
+        /* cardinal letters */
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        [['N', -Math.PI/2], ['E', 0], ['S', Math.PI/2], ['W', Math.PI]].forEach(c => {
+          ctx.font = '600 ' + Math.round(S * 0.076) + "px 'Space Grotesk', sans-serif";
+          ctx.fillStyle = c[0] === 'N' ? pal.dialN : pal.dialText;
+          ctx.fillText(c[0], cx + Math.cos(c[1]) * (R - S * 0.118), cy + Math.sin(c[1]) * (R - S * 0.118));
+        });
+
+        /* arrow — weathervane: head points the bearing the wind comes FROM */
+        const ang = ((direction == null ? 0 : direction) - 90) * Math.PI / 180;
+        const L = R * 0.82, headL = S * 0.16, headW = S * 0.125, shaftW = S * 0.05, tail = -R * 0.5;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(ang);
+        ctx.fillStyle = arrowColor;
+        ctx.beginPath();
+        ctx.moveTo(tail, -shaftW / 2);
+        ctx.lineTo(L - headL, -shaftW / 2);
+        ctx.lineTo(L - headL, -headW / 2);
+        ctx.lineTo(L, 0);
+        ctx.lineTo(L - headL, headW / 2);
+        ctx.lineTo(L - headL, shaftW / 2);
+        ctx.lineTo(tail, shaftW / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        /* hub */
+        ctx.beginPath(); ctx.arc(cx, cy, S * 0.044, 0, Math.PI * 2);
+        ctx.fillStyle = pal.hub; ctx.fill();
+        ctx.lineWidth = 2.5; ctx.strokeStyle = arrowColor; ctx.stroke();
+      }, [direction, speedKnots, theme, size]);
+      return (
+        <div className="arrow-wrap" ref={wrapRef}>
+          <canvas ref={canvasRef} style={{ width: size + 'px', height: size + 'px' }} />
+        </div>
+      );
+    };
+
+    /* ---------- icons ---------- */
+    const WindGlyph = () => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <path d="M3 8h11a3 3 0 1 0-3-3" />
+        <path d="M3 14h15a3 3 0 1 1-3 3" />
+        <path d="M3 11h7" />
+      </svg>
+    );
+    const SunIcon = () => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <circle cx="12" cy="12" r="4.2" />
+        <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8" />
+      </svg>
+    );
+    const MoonIcon = () => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+      </svg>
+    );
+    const PinIcon = () => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z" />
+        <circle cx="12" cy="10" r="2.6" />
+      </svg>
+    );
+    const TempIcon = () => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M13 16V6a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v10a5 5 0 0 0 10 0v-2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5V16a3 3 0 0 1-6 0z" />
+      </svg>
+    );
+    const HumidityIcon = () => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2.7s6 6.3 6 10.3a6 6 0 0 1-12 0c0-4 6-10.3 6-10.3z" />
+      </svg>
+    );
+
+    /* ---------- chart filters ---------- */
+    const ChartFilters = ({ selected, onToggle, disabled }) => {
+      const metrics = { speed: 'Wind Speed', deg: 'Direction', temp: 'Temperature', humidity: 'Humidity' };
+      return (
+        <div className="chips">
+          <span className="chips-label">Compare any 2:</span>
+          {Object.keys(metrics).map(key => (
+            <button
+              key={key}
+              className={'chip' + (selected.includes(key) ? ' on' : '')}
+              disabled={disabled && !selected.includes(key)}
+              onClick={() => onToggle(key)}>
+              {metrics[key]}
+            </button>
+          ))}
+        </div>
+      );
+    };
+
+    const DirectionAxisControls = ({ onShift, onReset }) => (
+      <div className="chart-controls">
+        <button className="mini-btn" title="Rotate axis up" onClick={() => onShift(-45)}>▲</button>
+        <button className="mini-btn text" onClick={onReset}>Reset</button>
+        <button className="mini-btn" title="Rotate axis down" onClick={() => onShift(45)}>▼</button>
+      </div>
+    );
+
+    /* ---------- main app ---------- */
+    const App = () => {
+      const [theme, toggleTheme] = useTheme();
+      const [allStations, setAllStations] = useState([]);
+      const [selectedStation, setSelectedStation] = useState(null);
+      const [liveDataMap, setLiveDataMap] = useState({});
+      const [chartHistory, setChartHistory] = useState({});
+      const [units, setUnits] = useState('knots');
+      const [historyStatus, setHistoryStatus] = useState(null);
+      const [isZoomed, setIsZoomed] = useState(false);
+      const [isStationModalOpen, setStationModalOpen] = useState(false);
+      const [directionCenter, setDirectionCenter] = useState(180);
+      const [selectedMetrics, setSelectedMetrics] = useState(['speed', 'deg']);
+
+      const mapRef = useRef(null);
+      const windChartRef = useRef(null);
+      const windCanvasRef = useRef(null);
+
+      useEffect(() => {
+        const fetchLive = async () => {
+          try {
+            const headers = { "x-api-key": API_KEY };
+            const [speed, deg, temp, humid] = await Promise.all([
+              fetch(`${API_BASE}wind-speed`, { headers }).then(r => r.json()),
+              fetch(`${API_BASE}wind-direction`, { headers }).then(r => r.json()),
+              fetch(`${API_BASE}air-temperature`, { headers }).then(r => r.json()),
+              fetch(`${API_BASE}relative-humidity`, { headers }).then(r => r.json())
+            ]);
+
+            if (speed.code === 0 && speed.data.stations) {
+              setAllStations(speed.data.stations);
+              setSelectedStation(prev => prev || speed.data.stations.find(s => s.name.includes('East Coast')) || speed.data.stations[0]);
+
+              const extractMap = (dataset) => {
+                const map = {};
+                if (dataset.data && dataset.data.readings && dataset.data.readings[0]) {
+                  dataset.data.readings[0].data.forEach(r => map[r.stationId] = r.value);
+                  map._time = new Date(dataset.data.readings[0].timestamp);
                 }
+                return map;
+              };
+
+              const sMap = extractMap(speed);
+              const dMap = extractMap(deg);
+              const tMap = extractMap(temp);
+              const hMap = extractMap(humid);
+
+              const combined = {};
+              speed.data.stations.forEach(s => {
+                combined[s.id] = {
+                  speed: sMap[s.id], deg: dMap[s.id], temp: tMap[s.id], humidity: hMap[s.id], time: sMap._time
+                };
+              });
+
+              setLiveDataMap(combined);
+              fetchHistoryRobust(speed.data.stations);
             }
+          } catch (e) {
+            console.error("Live fetch error:", e);
+          }
         };
 
-        const northLinePlugin = {
-            id: 'northLine',
-            afterDraw: chart => {
-                const yAxis = chart.scales.y1;
-                if (!yAxis || yAxis.id !== 'deg') return;
-                const ctx = chart.ctx;
-                const area = chart.chartArea;
-                if (!area) return;
-                const ticks = yAxis.getTicks();
-                ticks.forEach(t => {
-                    if (t.value % 360 === 0) {
-                        const y = yAxis.getPixelForTick(t.index);
-                        if(y >= area.top && y <= area.bottom) {
-                            ctx.save(); ctx.beginPath(); ctx.moveTo(area.left, y); ctx.lineTo(area.right, y);
-                            ctx.lineWidth = 1; ctx.strokeStyle = 'red'; ctx.setLineDash([5, 5]); ctx.stroke(); ctx.restore();
-                        }
+        fetchLive();
+        const interval = setInterval(fetchLive, 60000);
+        return () => clearInterval(interval);
+      }, []);
+
+      const fetchHistoryRobust = async (stations) => {
+        setHistoryStatus("Loading…");
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const headers = { "x-api-key": API_KEY };
+
+        const fetchWithThrottle = async (endpoint) => {
+          let readings = [];
+          let url = `${API_BASE}${endpoint}?date=${dateStr}`;
+          let page = 0;
+          while (url && page < 20) {
+            try {
+              const res = await fetch(url, { headers });
+              if (res.status === 429) { await sleep(1000); continue; }
+              const json = await res.json();
+              if (json.code !== 0) break;
+              if (json.data.readings) readings.push(...json.data.readings);
+              if (json.data.paginationToken) {
+                url = `${API_BASE}${endpoint}?date=${dateStr}&paginationToken=${encodeURIComponent(json.data.paginationToken)}`;
+                page++;
+                await sleep(300);
+              } else { url = null; }
+            } catch (err) {
+              console.warn(`Error fetching ${endpoint} page ${page}`, err);
+              break;
+            }
+          }
+          return readings;
+        };
+
+        const [speedRaw, degRaw, tempRaw, humidRaw] = await Promise.all([
+          fetchWithThrottle('wind-speed'),
+          fetchWithThrottle('wind-direction'),
+          fetchWithThrottle('air-temperature'),
+          fetchWithThrottle('relative-humidity')
+        ]);
+
+        const timeMap = {};
+        const process = (raw, key) => {
+          if (!raw) return;
+          raw.forEach(batch => {
+            const t = new Date(batch.timestamp).getTime();
+            batch.data.forEach(r => {
+              if (!timeMap[r.stationId]) timeMap[r.stationId] = {};
+              if (!timeMap[r.stationId][t]) timeMap[r.stationId][t] = { time: t };
+              timeMap[r.stationId][t][key] = r.value;
+            });
+          });
+        };
+
+        process(speedRaw, 'speed');
+        process(degRaw, 'deg');
+        process(tempRaw, 'temp');
+        process(humidRaw, 'humidity');
+
+        const historyByStation = {};
+        stations.forEach(s => {
+          const arr = timeMap[s.id] ? Object.values(timeMap[s.id]) : [];
+          arr.sort((a, b) => a.time - b.time);
+          const cutoff = now.getTime() - (6 * 60 * 60 * 1000);
+          historyByStation[s.id] = arr.filter(d => d.time >= cutoff);
+        });
+
+        setChartHistory(historyByStation);
+        setHistoryStatus(null);
+      };
+
+      /* map */
+      useEffect(() => {
+        if (!isStationModalOpen) return;
+        const pal = PALETTE[theme];
+        const tileURL = theme === 'dark'
+          ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+          : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+        const id = setTimeout(() => {
+          const el = document.getElementById('map');
+          if (!el) return;
+          const map = L.map('map').setView([1.3521, 103.8198], 11);
+          mapRef.current = map;
+          L.tileLayer(tileURL, {
+            attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+          }).addTo(map);
+          allStations.forEach(s => {
+            const m = L.circleMarker([s.location.latitude, s.location.longitude], {
+              radius: 7, color: pal.accent, weight: 2, fillColor: pal.accent, fillOpacity: 0.5
+            }).addTo(map);
+            m.bindTooltip(s.name);
+            m.on('click', () => { setSelectedStation(s); setStationModalOpen(false); });
+          });
+        }, 70);
+        return () => {
+          clearTimeout(id);
+          if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+        };
+      }, [isStationModalOpen, allStations, theme]);
+
+      /* chart */
+      useEffect(() => {
+        const canvas = windCanvasRef.current;
+        if (!canvas || !selectedStation) return;
+        if (windChartRef.current) { windChartRef.current.destroy(); windChartRef.current = null; }
+        setIsZoomed(false);
+
+        const pal = PALETTE[theme];
+        const data = chartHistory[selectedStation.id] || [];
+
+        const metricConfigs = {
+          speed: {
+            key: 'speed', label: `Wind Speed (${units})`,
+            data: data.map(d => ({ x: d.time, y: convertSpeed(d.speed, units) })),
+            getScale: () => ({ type: 'linear', display: true, position: 'left', beginAtZero: true })
+          },
+          deg: {
+            key: 'deg', label: 'Wind Direction (°)',
+            data: data.map(d => {
+              if (d.deg === undefined) return { x: d.time, y: null };
+              let val = d.deg;
+              const diff = val - directionCenter;
+              if (diff > 180) val -= 360;
+              if (diff < -180) val += 360;
+              return { x: d.time, y: val };
+            }),
+            getScale: () => ({
+              id: 'deg', type: 'linear', display: true, position: 'right',
+              min: directionCenter - 180, max: directionCenter + 180,
+              title: { display: true, text: 'Direction (°)' },
+              ticks: { stepSize: 45, callback: v => (Math.round(v / 45) * 45 + 360) % 360 }
+            })
+          },
+          temp: {
+            key: 'temp', label: 'Temperature (°C)',
+            data: data.map(d => ({ x: d.time, y: d.temp })),
+            getScale: () => ({ type: 'linear', display: true, position: 'left' })
+          },
+          humidity: {
+            key: 'humidity', label: 'Humidity (%)',
+            data: data.map(d => ({ x: d.time, y: d.humidity })),
+            getScale: () => ({ type: 'linear', display: true, position: 'right', min: 0, max: 100 })
+          }
+        };
+
+        const datasets = [];
+        const scales = { x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } } } };
+
+        if (selectedMetrics[0]) {
+          const m1 = metricConfigs[selectedMetrics[0]];
+          datasets.push({ label: m1.label, data: m1.data, borderColor: pal.metric.a, backgroundColor: pal.metric.a,
+            yAxisID: 'y', pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, tension: 0.35 });
+          scales.y = Object.assign(m1.getScale(), { position: 'left' });
+        }
+        if (selectedMetrics[1]) {
+          const m2 = metricConfigs[selectedMetrics[1]];
+          datasets.push({ label: m2.label, data: m2.data, borderColor: pal.metric.b, backgroundColor: pal.metric.b,
+            yAxisID: 'y1', pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, tension: 0.35,
+            borderDash: m2.key === 'deg' ? [6, 5] : [] });
+          scales.y1 = Object.assign(m2.getScale(), { position: 'right' });
+        }
+
+        ['x', 'y', 'y1'].forEach(k => {
+          if (!scales[k]) return;
+          scales[k].grid = Object.assign({}, scales[k].grid, { color: pal.chartGrid });
+          scales[k].border = Object.assign({}, scales[k].border, { color: pal.chartGrid });
+          scales[k].ticks = Object.assign({}, scales[k].ticks, { color: pal.chartTick });
+          if (scales[k].title) scales[k].title.color = pal.chartTick;
+        });
+
+        windChartRef.current = new Chart(canvas.getContext('2d'), {
+          type: 'line',
+          data: { datasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            animation: { duration: 600 },
+            interaction: { mode: 'index', intersect: false },
+            scales,
+            plugins: {
+              legend: { labels: { color: pal.chartTick, usePointStyle: true, boxWidth: 8, padding: 16 } },
+              zoom: {
+                pan: { enabled: true, mode: 'x' },
+                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x', onZoomComplete: () => setIsZoomed(true) }
+              },
+              tooltip: {
+                backgroundColor: pal.tooltipBg, titleColor: pal.tooltipText, bodyColor: pal.tooltipText,
+                borderColor: pal.tooltipBrd, borderWidth: 1, padding: 10, cornerRadius: 9,
+                callbacks: {
+                  title: (items) => { const d = new Date(items[0].parsed.x); return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; },
+                  label: (context) => {
+                    let label = context.dataset.label || '';
+                    if (label) label += ': ';
+                    let value = context.parsed.y;
+                    if (context.dataset.yAxisID === 'y1' && context.dataset.label.includes('Direction')) {
+                      const normalized = ((value % 360) + 360) % 360;
+                      return label + Math.round(normalized) + '°';
                     }
-                });
+                    return label + value;
+                  }
+                }
+              }
             }
-        };
+          },
+          plugins: [verticalLinePlugin, northLinePlugin]
+        });
+      }, [chartHistory, selectedStation, units, directionCenter, selectedMetrics, theme]);
 
-        // --- Components ---
-        const Speedometer = ({ speedKnots }) => {
-            const canvasRef = useRef(null);
-            useEffect(() => {
-                const canvas = canvasRef.current; if (!canvas) return;
-                const ctx = canvas.getContext('2d');
-                const { width, height } = canvas;
-                const cx = width / 2, cy = height - 10, r = width / 2 - 20;
-                ctx.clearRect(0,0,width,height);
-                const arc = (s, e, c) => { ctx.beginPath(); ctx.arc(cx, cy, r, s, e); ctx.strokeStyle = c; ctx.lineWidth = 12; ctx.stroke(); };
-                arc(Math.PI, Math.PI + (Math.PI * 0.25), SPEED_COLORS.LEVEL_1);
-                arc(Math.PI + (Math.PI * 0.25), Math.PI + (Math.PI * 0.5), SPEED_COLORS.LEVEL_2);
-                arc(Math.PI + (Math.PI * 0.5), Math.PI + (Math.PI * 0.75), SPEED_COLORS.LEVEL_3);
-                arc(Math.PI + (Math.PI * 0.75), 2 * Math.PI, SPEED_COLORS.LEVEL_4);
-                const angle = Math.PI + (Math.PI * (Math.min(speedKnots || 0, 40) / 40));
-                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(angle)*(r-5), cy + Math.sin(angle)*(r-5));
-                ctx.strokeStyle = '#333'; ctx.lineWidth = 3; ctx.stroke();
-            }, [speedKnots]);
-            return <canvas ref={canvasRef} width="160" height="90"></canvas>;
-        };
+      const handleResetZoom = () => { if (windChartRef.current) { windChartRef.current.resetZoom(); setIsZoomed(false); } };
+      const handleAxisShift = (amt) => setDirectionCenter(prev => (prev + amt + 360) % 360);
+      const handleMetricToggle = (key) => setSelectedMetrics(prev =>
+        prev.includes(key) ? prev.filter(m => m !== key) : (prev.length < 2 ? [...prev, key] : prev));
 
-        const DirectionArrow = ({ direction, speedKnots }) => (
-            <div className="relative w-24 h-24 flex items-center justify-center">
-                <div style={{ transform: `rotate(${direction + 180}deg)`, transition: 'transform 0.3s ease-out' }}>
-                    <svg width="60" height="60" viewBox="0 0 100 100">
-                        <path d="M50 0 L20 40 L40 40 L40 100 L60 100 L60 40 L80 40 Z" fill={getSpeedColor(speedKnots)} stroke="black" strokeWidth="3" strokeLinejoin="round" />
-                    </svg>
+      const current = (selectedStation && liveDataMap[selectedStation.id]) ? liveDataMap[selectedStation.id] : {};
+      const verdict = windVerdict(current.speed);
+      const meterPct = Math.min(Math.max(current.speed || 0, 0), 40) / 40 * 100;
+      const isSailing = current.speed > KNOT_THRESHOLDS.SAIL;
+      const hasDir = current.deg !== undefined && current.deg !== null;
+
+      return (
+        <React.Fragment>
+          <WindField speedKnots={current.speed} directionDeg={current.deg} theme={theme} />
+
+          <div className="app">
+            <header className="topbar">
+              <div className="brand">
+                <div className="brand-mark"><WindGlyph /></div>
+                <div>
+                  <div className="brand-title">LIVE WIND
+                    <span className="live-pill"><span className="live-dot"></span>LIVE</span>
+                  </div>
+                  <div className="brand-sub">Singapore · NEA real-time network</div>
                 </div>
-            </div>
-        );
+              </div>
+              <div className="topbar-actions">
+                <button className="pill-btn" onClick={() => setStationModalOpen(true)}>
+                  <PinIcon />
+                  <span className="station-name">{selectedStation ? selectedStation.name : 'Select station'}</span>
+                </button>
+                <button className="pill-btn icon-btn" onClick={toggleTheme} title="Toggle theme">
+                  {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                </button>
+              </div>
+            </header>
 
-        const DirectionAxisControls = ({ onShift, onReset }) => (
-            <div className="flex items-center gap-2">
-                <button onClick={() => onShift(-45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 shadow">▲</button>
-                <button onClick={onReset} className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-md hover:bg-gray-300 shadow">Reset</button>
-                <button onClick={() => onShift(45)} className="text-lg bg-gray-200 text-gray-700 w-8 h-8 rounded-full hover:bg-gray-300 shadow">▼</button>
-            </div>
-        );
+            {isSailing && (
+              <div className="sail-banner">⛵ <b>Wind is great</b> — stop working and start sailing.</div>
+            )}
 
-        const ChartFilters = ({ selected, onToggle, disabled }) => {
-            const metrics = { speed: 'Wind Speed', deg: 'Wind Direction', temp: 'Temperature', humidity: 'Humidity' };
-            return (
-                <div className="flex flex-wrap gap-x-4 gap-y-2 mb-4">
-                    <span className="text-sm font-semibold text-gray-600 self-center">Compare Any 2 Metrics:</span>
-                    {Object.keys(metrics).map(key => (
-                        <div key={key} className="flex items-center">
-                            <input type="checkbox" id={`metric-${key}`} checked={selected.includes(key)} onChange={() => onToggle(key)} disabled={disabled && !selected.includes(key)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                            <label htmlFor={`metric-${key}`} className="ml-2 text-sm text-gray-700">{metrics[key]}</label>
-                        </div>
+            <div className="bento">
+              <section className="panel cell-hero rise" style={{ animationDelay: '.04s' }}>
+                <span className="tile-label">Wind Direction</span>
+                <WindArrow direction={current.deg} speedKnots={current.speed} theme={theme} />
+                <div className="dir-readout">
+                  <div className="dir-deg num">{hasDir ? current.deg + '°' : '—'}</div>
+                  <div className="dir-card">{hasDir ? 'Wind from the ' + cardinalWord(current.deg) : 'Awaiting live data'}</div>
+                </div>
+                <div className="hero-foot">
+                  <span className="live-dot"></span>
+                  <span>{selectedStation ? selectedStation.name : 'Connecting…'}{current.time ? ' · ' + formatTimestamp(current.time) : ''}</span>
+                </div>
+              </section>
+
+              <section className="panel cell-speed rise" style={{ animationDelay: '.1s' }}>
+                <div className="tile-head">
+                  <span className="tile-label">Wind Speed</span>
+                  <div className="seg">
+                    {Object.keys(CONVERSIONS).map(u => (
+                      <button key={u} className={units === u ? 'on' : ''} onClick={() => setUnits(u)}>{u}</button>
                     ))}
+                  </div>
                 </div>
-            );
-        };
+                <div className="speed-readout">
+                  <span className="speed-num"><AnimatedNumber value={convertSpeed(current.speed, units)} decimals={1} /></span>
+                  <span className="speed-unit">{units}</span>
+                </div>
+                <div className="speed-verdict">{verdict}</div>
+                <div className="meter">
+                  <div className="meter-track">
+                    <div className="meter-fill" style={{ width: meterPct + '%' }}></div>
+                    <div className="meter-thumb" style={{ left: meterPct + '%' }}></div>
+                  </div>
+                  <div className="meter-scale"><span>0</span><span>10</span><span>20</span><span>30</span><span>40 kt</span></div>
+                </div>
+              </section>
 
-        // --- Main App ---
-        const App = () => {
-            const [allStations, setAllStations] = useState([]);
-            const [selectedStation, setSelectedStation] = useState(null);
-            
-            const [liveDataMap, setLiveDataMap] = useState({});
-            const [chartHistory, setChartHistory] = useState({});
-            
-            const [units, setUnits] = useState('knots');
-            const [historyStatus, setHistoryStatus] = useState(null);
-            const [isZoomed, setIsZoomed] = useState(false);
-            const [isStationModalOpen, setStationModalOpen] = useState(false);
-            const [directionCenter, setDirectionCenter] = useState(180);
-            const [selectedMetrics, setSelectedMetrics] = useState(['speed', 'deg']);
-            
-            const mapRef = useRef(null);
-            const windChartRef = useRef(null);
-            const windCanvasRef = useRef(null);
+              <section className="panel cell-conditions rise" style={{ animationDelay: '.16s' }}>
+                <span className="tile-label">Conditions</span>
+                <div className="cond-grid">
+                  <div className="cond">
+                    <TempIcon />
+                    <div className="cond-val">{current.temp ? <AnimatedNumber value={current.temp} decimals={1} /> : '—'}{current.temp ? '°' : ''}</div>
+                    <div className="cond-name">Temperature</div>
+                  </div>
+                  <div className="cond">
+                    <HumidityIcon />
+                    <div className="cond-val">{current.humidity ? <AnimatedNumber value={current.humidity} decimals={0} /> : '—'}{current.humidity ? '%' : ''}</div>
+                    <div className="cond-name">Humidity</div>
+                  </div>
+                </div>
+              </section>
 
-            useEffect(() => {
-                const fetchLive = async () => {
-                    try {
-                        const headers = { "x-api-key": API_KEY };
-                        const [speed, deg, temp, humid] = await Promise.all([
-                            fetch(`${API_BASE}wind-speed`, { headers }).then(r => r.json()),
-                            fetch(`${API_BASE}wind-direction`, { headers }).then(r => r.json()),
-                            fetch(`${API_BASE}air-temperature`, { headers }).then(r => r.json()),
-                            fetch(`${API_BASE}relative-humidity`, { headers }).then(r => r.json())
-                        ]);
+              <section className="panel cell-chart rise" style={{ animationDelay: '.22s' }}>
+                <div className="tile-head">
+                  <h3 className="chart-title">6-Hour History
+                    {historyStatus && <span className="chart-status">({historyStatus})</span>}
+                  </h3>
+                  <div className="chart-controls">
+                    {selectedMetrics.includes('deg') &&
+                      <DirectionAxisControls onShift={handleAxisShift} onReset={() => setDirectionCenter(180)} />}
+                    {isZoomed && <button className="reset-zoom" onClick={handleResetZoom}>Reset Zoom</button>}
+                  </div>
+                </div>
+                <ChartFilters selected={selectedMetrics} onToggle={handleMetricToggle} disabled={selectedMetrics.length >= 2} />
+                <div className="chart-box"><canvas ref={windCanvasRef}></canvas></div>
+              </section>
 
-                        if (speed.code === 0 && speed.data.stations) {
-                            setAllStations(speed.data.stations);
-                            setSelectedStation(prev => prev || speed.data.stations.find(s => s.name.includes('East Coast')) || speed.data.stations[0]);
+              <section className="panel cell-about rise" style={{ animationDelay: '.28s' }}>
+                <h3 className="about-title">About the data</h3>
+                <div className="about-grid">
+                  <div className="about-item">Real-time wind, temperature and humidity sourced directly from the <b>National Environment Agency (NEA)</b> via data.gov.sg (V2 API).</div>
+                  <div className="about-item"><b>Update frequency:</b> readings refresh roughly every 5 minutes; this dashboard re-polls every 60 seconds.</div>
+                </div>
+                <a className="about-link" href="https://data.gov.sg/collections/1459/view" target="_blank" rel="noopener noreferrer">
+                  Reference: data.gov.sg/collections/1459 →
+                </a>
+              </section>
+            </div>
 
-                            const extractMap = (dataset) => {
-                                const map = {};
-                                if(dataset.data && dataset.data.readings && dataset.data.readings[0]) {
-                                    dataset.data.readings[0].data.forEach(r => map[r.stationId] = r.value);
-                                    map._time = new Date(dataset.data.readings[0].timestamp);
-                                }
-                                return map;
-                            };
-                            
-                            const sMap = extractMap(speed);
-                            const dMap = extractMap(deg);
-                            const tMap = extractMap(temp);
-                            const hMap = extractMap(humid);
-                            
-                            const combined = {};
-                            speed.data.stations.forEach(s => {
-                                combined[s.id] = {
-                                    speed: sMap[s.id], deg: dMap[s.id], temp: tMap[s.id], humidity: hMap[s.id], time: sMap._time
-                                };
-                            });
-                            
-                            setLiveDataMap(combined);
-                            fetchHistoryRobust(speed.data.stations);
-                        }
-                    } catch (e) {
-                        console.error("Live fetch error:", e);
-                    }
-                };
-                
-                fetchLive();
-                const interval = setInterval(fetchLive, 60000);
-                return () => clearInterval(interval);
-            }, []);
+            <div className="foot">Live Wind · built on open NEA data</div>
+          </div>
 
-            const fetchHistoryRobust = async (stations) => {
-                setHistoryStatus("Loading...");
-                const now = new Date();
-                const dateStr = now.toISOString().split('T')[0];
-                const headers = { "x-api-key": API_KEY };
-
-                const fetchWithThrottle = async (endpoint) => {
-                    let readings = [];
-                    let url = `${API_BASE}${endpoint}?date=${dateStr}`;
-                    let page = 0;
-                    
-                    while(url && page < 20) {
-                        try {
-                            const res = await fetch(url, { headers });
-                            if (res.status === 429) {
-                                await sleep(1000);
-                                continue;
-                            }
-                            const json = await res.json();
-                            if(json.code !== 0) break;
-                            
-                            if(json.data.readings) readings.push(...json.data.readings);
-                            
-                            if(json.data.paginationToken) {
-                                url = `${API_BASE}${endpoint}?date=${dateStr}&paginationToken=${encodeURIComponent(json.data.paginationToken)}`;
-                                page++;
-                                await sleep(300);
-                            } else {
-                                url = null;
-                            }
-                        } catch (err) {
-                            console.warn(`Error fetching ${endpoint} page ${page}`, err);
-                            break;
-                        }
-                    }
-                    return readings;
-                };
-
-                const [speedRaw, degRaw, tempRaw, humidRaw] = await Promise.all([
-                    fetchWithThrottle('wind-speed'),
-                    fetchWithThrottle('wind-direction'),
-                    fetchWithThrottle('air-temperature'),
-                    fetchWithThrottle('relative-humidity')
-                ]);
-
-                const timeMap = {};
-                const process = (raw, key) => {
-                    if(!raw) return;
-                    raw.forEach(batch => {
-                        const t = new Date(batch.timestamp).getTime();
-                        batch.data.forEach(r => {
-                            if(!timeMap[r.stationId]) timeMap[r.stationId] = {};
-                            if(!timeMap[r.stationId][t]) timeMap[r.stationId][t] = { time: t };
-                            timeMap[r.stationId][t][key] = r.value;
-                        });
-                    });
-                };
-
-                process(speedRaw, 'speed');
-                process(degRaw, 'deg');
-                process(tempRaw, 'temp');
-                process(humidRaw, 'humidity');
-
-                const historyByStation = {};
-                stations.forEach(s => {
-                    const arr = timeMap[s.id] ? Object.values(timeMap[s.id]) : [];
-                    arr.sort((a,b) => a.time - b.time);
-                    const cutoff = now.getTime() - (6 * 60 * 60 * 1000);
-                    historyByStation[s.id] = arr.filter(d => d.time >= cutoff);
-                });
-
-                setChartHistory(historyByStation);
-                setHistoryStatus(null);
-            };
-
-            // 3. Map & Chart Logic
-            useEffect(() => {
-                if (isStationModalOpen && !mapRef.current) {
-                    setTimeout(() => {
-                        const map = L.map('map').setView([1.3521, 103.8198], 11);
-                        mapRef.current = map;
-                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
-                        const layer = L.layerGroup().addTo(map);
-                        allStations.forEach(s => {
-                            const m = L.marker([s.location.latitude, s.location.longitude]).addTo(layer);
-                            m.bindTooltip(s.name).on('click', () => { setSelectedStation(s); setStationModalOpen(false); });
-                        });
-                    }, 100);
-                }
-                return () => { if (!isStationModalOpen && mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
-            }, [isStationModalOpen, allStations]);
-
-            useEffect(() => {
-                const canvas = windCanvasRef.current;
-                if (!canvas || !selectedStation) return;
-                if (windChartRef.current) { windChartRef.current.destroy(); windChartRef.current = null; }
-                setIsZoomed(false);
-
-                const data = chartHistory[selectedStation.id] || [];
-                
-                const metricConfigs = {
-                    speed: {
-                        key: 'speed', label: `Wind Speed (${units})`, color: 'black', yAxisID: 'y',
-                        data: data.map(d => ({ x: d.time, y: convertSpeed(d.speed, units) })),
-                        getScale: () => ({ type: 'linear', display: true, position: 'left', beginAtZero: true })
-                    },
-                    deg: {
-                        key: 'deg', label: 'Wind Direction (°)', color: 'red', yAxisID: 'y1',
-                        data: data.map(d => {
-                            if (d.deg === undefined) return { x: d.time, y: null };
-                            let val = d.deg;
-                            const diff = val - directionCenter;
-                            if (diff > 180) val -= 360;
-                            if (diff < -180) val += 360;
-                            return { x: d.time, y: val };
-                        }),
-                        getScale: () => ({
-                            id: 'deg', type: 'linear', display: true, position: 'right',
-                            min: directionCenter - 180, max: directionCenter + 180,
-                            title: { display: true, text: 'Direction (°)' },
-                            ticks: { stepSize: 45, callback: v => (Math.round(v / 45) * 45 + 360) % 360 }
-                        })
-                    },
-                    temp: {
-                        key: 'temp', label: 'Temperature (°C)', color: 'orange', yAxisID: 'y',
-                        data: data.map(d => ({ x: d.time, y: d.temp })),
-                        getScale: () => ({ type: 'linear', display: true, position: 'left' })
-                    },
-                    humidity: {
-                        key: 'humidity', label: 'Humidity (%)', color: 'blue', yAxisID: 'y1',
-                        data: data.map(d => ({ x: d.time, y: d.humidity })),
-                        getScale: () => ({ type: 'linear', display: true, position: 'right', min: 0, max: 100 })
-                    }
-                };
-
-                const datasets = [];
-                const scales = { x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } } } };
-
-                if (selectedMetrics[0]) {
-                    const m1 = metricConfigs[selectedMetrics[0]];
-                    datasets.push({ label: m1.label, data: m1.data, borderColor: m1.color, yAxisID: 'y', pointRadius: 0, pointHoverRadius: 4 });
-                    scales.y = { ...m1.getScale(), position: 'left' };
-                }
-                if (selectedMetrics[1]) {
-                    const m2 = metricConfigs[selectedMetrics[1]];
-                    datasets.push({ label: m2.label, data: m2.data, borderColor: m2.color, yAxisID: 'y1', pointRadius: 0, pointHoverRadius: 4, borderDash: m2.key === 'deg' ? [5,5] : [] });
-                    scales.y1 = { ...m2.getScale(), position: 'right' };
-                }
-
-                windChartRef.current = new Chart(canvas.getContext('2d'), {
-                    type: 'line',
-                    data: { datasets },
-                    options: {
-                        responsive: true, maintainAspectRatio: false,
-                        interaction: { mode: 'index', intersect: false },
-                        scales,
-                        plugins: {
-                            zoom: {
-                                pan: { enabled: true, mode: 'x' },
-                                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x', onZoomComplete: () => setIsZoomed(true) }
-                            },
-                            tooltip: { 
-                                callbacks: { 
-                                    title: (items) => { const d = new Date(items[0].parsed.x); return `${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; },
-                                    label: (context) => {
-                                        let label = context.dataset.label || '';
-                                        if (label) label += ': ';
-                                        let value = context.parsed.y;
-                                        // FIX: Force normalization of degrees in tooltip (e.g., 383 -> 23)
-                                        if (context.dataset.yAxisID === 'y1' && context.dataset.label.includes('Direction')) {
-                                             const normalized = ((value % 360) + 360) % 360;
-                                             return label + Math.round(normalized) + '°';
-                                        }
-                                        return label + value;
-                                    }
-                                } 
-                            }
-                        }
-                    },
-                    plugins: [verticalLinePlugin, northLinePlugin]
-                });
-            }, [chartHistory, selectedStation, units, directionCenter, selectedMetrics]);
-
-            const handleResetZoom = () => { if (windChartRef.current) { windChartRef.current.resetZoom(); setIsZoomed(false); } };
-            const handleAxisShift = (amt) => setDirectionCenter(prev => (prev + amt + 360) % 360);
-            const handleMetricToggle = (key) => setSelectedMetrics(prev => prev.includes(key) ? prev.filter(m => m !== key) : (prev.length < 2 ? [...prev, key] : prev));
-
-            const current = (selectedStation && liveDataMap[selectedStation.id]) ? liveDataMap[selectedStation.id] : {};
-
-            return (
-                <div className="min-h-screen bg-gray-100 p-4 sm:p-6 lg:p-8">
-                    {/* Modal */}
-                    {isStationModalOpen && (
-                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={()=>setStationModalOpen(false)}>
-                            <div className="bg-white p-6 rounded-xl shadow-lg w-full max-w-2xl" onClick={e=>e.stopPropagation()}>
-                                <h2 className="text-2xl font-semibold mb-4">Select Station</h2>
-                                <div id="map"></div>
-                                <div className="station-list mt-4 border-t pt-2">
-                                    {allStations.sort((a,b)=>a.name.localeCompare(b.name)).map(s => (
-                                        <div key={s.id} onClick={()=>{setSelectedStation(s); setStationModalOpen(false)}} className={`p-2 rounded cursor-pointer hover:bg-blue-100 ${selectedStation?.id===s.id ? 'bg-blue-200 font-bold' : ''}`}>
-                                            {s.name}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="max-w-7xl mx-auto">
-                        <header className="mb-6 flex justify-between items-center">
-                            <div>
-                                <h1 className="text-2xl font-bold text-gray-800">Live Wind Data</h1>
-                                <p className="text-lg text-gray-600 mt-1">Official Data (V2) - Robust</p>
-                            </div>
-                            <button onClick={()=>setStationModalOpen(true)} className="bg-white px-4 py-2 rounded-lg shadow hover:bg-gray-200 transition font-semibold">
-                                {selectedStation ? selectedStation.name : 'Select Station'}
-                            </button>
-                        </header>
-
-                        {(current.speed > KNOT_THRESHOLDS.SAIL) && (
-                            <div className="bg-green-500 text-white text-center font-bold p-4 rounded-lg mb-6 text-xl shadow-lg animate-pulse">
-                                Wind is Great! Stop working and start sailing! ⛵
-                            </div>
-                        )}
-
-                        <div className="flex flex-col gap-8">
-                            {/* Card 1: Live */}
-                            <div className="bg-white p-6 rounded-xl shadow-lg">
-                                <div className="mb-4">
-                                    <h2 className="text-2xl font-semibold text-gray-700">
-                                        <span className="text-blue-600">{selectedStation?.name || 'Loading...'}</span>
-                                    </h2>
-                                    <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                                        <div className="w-3 h-3 bg-red-500 rounded-full live-dot"></div>
-                                        <span>{current.time ? formatTimestamp(current.time) : 'Connecting...'}</span>
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="p-4 bg-gray-50 rounded-lg">
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="flex flex-col items-center">
-                                                <div className="text-center mb-2">
-                                                    <div className="text-xs text-gray-500">Direction</div>
-                                                    <div className="text-xl font-bold">{current.deg !== undefined ? current.deg + '° ' + degreesToCardinal(current.deg) : '-'}</div>
-                                                </div>
-                                                <DirectionArrow direction={current.deg || 0} speedKnots={current.speed} />
-                                            </div>
-                                            <div className="flex flex-col items-center">
-                                                <div className="text-center mb-2">
-                                                    <div className="text-xs text-gray-500">Speed</div>
-                                                    <div className="text-xl font-bold">{convertSpeed(current.speed, units).toFixed(1)} <small>{units}</small></div>
-                                                </div>
-                                                <Speedometer speedKnots={current.speed} />
-                                            </div>
-                                        </div>
-                                        <div className="flex justify-center mt-4 space-x-1 rounded-lg bg-gray-200 p-1">
-                                            {Object.keys(CONVERSIONS).map(u => <button key={u} onClick={()=>setUnits(u)} className={`px-3 py-1 text-sm font-semibold rounded-md transition ${units===u ? 'bg-white text-blue-600 shadow' : 'text-gray-600'}`}>{u}</button>)}
-                                        </div>
-                                    </div>
-                                    <div className="p-4 bg-gray-50 rounded-lg flex flex-col justify-center items-center">
-                                        <div className="text-center text-xs text-gray-500">Live Conditions</div>
-                                        <div className="flex items-center gap-6 mt-4">
-                                            <div className="text-center">
-                                                <svg className="w-10 h-10 mx-auto text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16V6a1 1 0 00-1-1H9a1 1 0 00-1 1v10a5 5 0 0010 0v-2.5a.5.5 0 00-.5-.5h-1a.5.5 0 00-.5.5V16a3 3 0 01-6 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 4a1 1 0 011-1h2a1 1 0 011 1v1a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path></svg>
-                                                <div className="text-2xl font-bold mt-2">{current.temp ? current.temp.toFixed(1) + '°C' : '-'}</div>
-                                                <div className="text-xs text-gray-500">Temperature</div>
-                                            </div>
-                                            <div className="text-center">
-                                                <svg className="w-10 h-10 mx-auto text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.8M9 19l3 3m0 0l3-3m-3 3V10"></path></svg>
-                                                <div className="text-2xl font-bold mt-2">{current.humidity ? current.humidity.toFixed(0) + '%' : '-'}</div>
-                                                <div className="text-xs text-gray-500">Humidity</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Card 2: History */}
-                            <div className="bg-white p-6 rounded-xl shadow-lg">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h3 className="text-lg font-semibold text-gray-700">
-                                        6-Hour History
-                                        {historyStatus && <span className="ml-2 text-xs text-blue-500 font-normal animate-pulse">({historyStatus})</span>}
-                                    </h3>
-                                    {selectedMetrics.includes('deg') && <DirectionAxisControls onShift={handleAxisShift} onReset={() => setDirectionCenter(180)} />}
-                                    {isZoomed && <button onClick={handleResetZoom} className="text-sm bg-blue-500 text-white py-1 px-3 rounded-lg hover:bg-blue-600 transition">Reset Zoom</button>}
-                                </div>
-                                <ChartFilters selected={selectedMetrics} onToggle={handleMetricToggle} disabled={selectedMetrics.length >= 2} />
-                                <div className="chart-container">
-                                    <canvas ref={windCanvasRef}></canvas>
-                                </div>
-                            </div>
-
-                            {/* Card 3: About */}
-                            <div className="bg-white p-6 rounded-xl shadow-lg">
-                                <h3 className="text-lg font-semibold text-gray-700 mb-4">About The Data</h3>
-                                <ul className="space-y-2 text-sm text-gray-600">
-                                    <li><p>This application displays real-time wind data sourced directly from the National Environment Agency (NEA) via data.gov.sg (V2 API).</p></li>
-                                    <li><p><strong>Update Frequency:</strong> Data is typically updated every 5 minutes.</p></li>
-                                </ul>
-                                <div className="mt-4 pt-4 border-t">
-                                     <a href="https://data.gov.sg/collections/1459/view" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-                                          Reference: https://data.gov.sg/collections/1459/view
-                                     </a>
-                                </div>
-                            </div>
-                        </div>
+          {isStationModalOpen && (
+            <div className="modal-overlay" onClick={() => setStationModalOpen(false)}>
+              <div className="modal panel" onClick={e => e.stopPropagation()}>
+                <div className="modal-head">
+                  <h2>Select a station</h2>
+                  <button className="modal-close" onClick={() => setStationModalOpen(false)}>✕</button>
+                </div>
+                <div id="map" className="modal-map"></div>
+                <div className="station-list">
+                  {[...allStations].sort((a, b) => a.name.localeCompare(b.name)).map(s => (
+                    <div key={s.id}
+                      onClick={() => { setSelectedStation(s); setStationModalOpen(false); }}
+                      className={'station-row' + (selectedStation && selectedStation.id === s.id ? ' active' : '')}>
+                      {s.name}
                     </div>
+                  ))}
                 </div>
-            );
-        };
+              </div>
+            </div>
+          )}
+        </React.Fragment>
+      );
+    };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
 </body>
 </html>
